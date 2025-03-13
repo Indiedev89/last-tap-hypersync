@@ -44,27 +44,27 @@ let query = {
   ],
   fieldSelection: {
     // Uncomment these fields if you need block data
-    block: [BlockField.Number, BlockField.Timestamp, BlockField.Hash],
+    // block: [BlockField.Number, BlockField.Timestamp, BlockField.Hash],
     log: [
       // Uncomment these fields if you need more log data
-      LogField.BlockNumber,
-      LogField.LogIndex,
-      LogField.TransactionIndex,
-      LogField.TransactionHash,
-      LogField.Data,
-      LogField.Address,
+      //   LogField.BlockNumber,
+      //   LogField.LogIndex,
+      //   LogField.TransactionIndex,
+      //   LogField.TransactionHash,
+      //   LogField.Data,
+      //   LogField.Address,
       LogField.Topic0,
-      LogField.Topic1,
-      LogField.Topic2,
-      LogField.Topic3,
+      //   LogField.Topic1,
+      //   LogField.Topic2,
+      //   LogField.Topic3,
     ],
     // Uncomment these fields if you need transaction data
-    transaction: [
-      TransactionField.From,
-      TransactionField.To,
-      TransactionField.Hash,
-      TransactionField.Value,
-    ],
+    // transaction: [
+    //   TransactionField.From,
+    //   TransactionField.To,
+    //   TransactionField.Hash,
+    //   TransactionField.Value,
+    // ],
   },
   joinMode: JoinMode.JoinTransactions,
 };
@@ -99,6 +99,9 @@ const screen = blessed.screen({
   fullUnicode: true,
 });
 
+// Define UI color scheme
+const uiColor = "#87CEFA"; // Original baby blue color
+
 // Create a grid layout
 const grid = new contrib.grid({
   rows: 12,
@@ -106,11 +109,11 @@ const grid = new contrib.grid({
   screen: screen,
 });
 
-// Create ASCII logo
+// Create ASCII logo - restored to original style
 const logo = grid.set(0, 0, 3, 12, blessed.box, {
-  content: chalk.cyan(
+  content: chalk.hex(uiColor)(
     figlet.textSync("HYPERSYNC", {
-      font: "ANSI Shadow",
+      font: "ANSI Shadow", // Restored to original ANSI Shadow font
       horizontalLayout: "full",
     })
   ),
@@ -119,11 +122,11 @@ const logo = grid.set(0, 0, 3, 12, blessed.box, {
   valign: "middle",
   border: {
     type: "line",
-    fg: "cyan",
+    fg: uiColor,
   },
 });
 
-// Create subtitle
+// Create subtitle - moved up directly after the logo
 const subtitle = grid.set(3, 0, 1, 12, blessed.box, {
   content: chalk.yellow(" Uniswap V3 Event Scanner - Powered by Envio "),
   tags: true,
@@ -141,7 +144,7 @@ const progressBox = grid.set(4, 0, 1, 12, blessed.box, {
   tags: true,
   border: {
     type: "line",
-    fg: "cyan",
+    fg: uiColor,
   },
   style: {
     fg: "white",
@@ -154,51 +157,38 @@ const stats = grid.set(5, 0, 2, 6, blessed.box, {
   tags: true,
   border: {
     type: "line",
-    fg: "cyan",
+    fg: uiColor,
   },
   style: {
     fg: "white",
   },
 });
 
-// Create event counter display
-const eventCounter = grid.set(5, 6, 2, 6, blessed.box, {
-  label: "Event Counts",
+// Create event distribution display - replacing event counter and using its space
+const eventDistribution = grid.set(5, 6, 2, 6, blessed.box, {
+  label: "Event Distribution",
   tags: true,
   border: {
     type: "line",
-    fg: "cyan",
+    fg: uiColor,
   },
   style: {
     fg: "white",
   },
 });
 
-// Create log window
+// Create log window - reduce height from 6 to 4 rows
 const logWindow = grid.set(7, 0, 4, 12, contrib.log, {
   label: "Event Log",
   tags: true,
   border: {
     type: "line",
-    fg: "cyan",
+    fg: uiColor,
   },
   style: {
     fg: "green",
   },
   bufferLength: 30,
-});
-
-// Create event distribution display (using boxes instead of bar chart)
-const eventDistribution = grid.set(11, 0, 1, 12, blessed.box, {
-  label: "Event Distribution",
-  tags: true,
-  border: {
-    type: "line",
-    fg: "cyan",
-  },
-  style: {
-    fg: "white",
-  },
 });
 
 // Exit on Escape, q, or Ctrl+C
@@ -215,7 +205,7 @@ const updateProgressBar = (progress, label = "") => {
     const emptyWidth = width - filledWidth;
 
     // Create the progress bar with colors
-    const filledBar = chalk.bgCyan(" ".repeat(filledWidth));
+    const filledBar = chalk.bgHex(uiColor)(" ".repeat(filledWidth));
     const emptyBar = chalk.bgBlack(" ".repeat(emptyWidth));
 
     // Update the progress box content
@@ -282,23 +272,23 @@ const updateEventDistribution = (eventCounts) => {
 
     // Set the content with each bar on its own line and ensure consistent spacing
     eventDistribution.setContent(
-      `${chalk.green("PoolCreated:".padEnd(labelWidth))} ${createBar(
+      `${chalk.hex(uiColor)("PoolCreated:".padEnd(labelWidth))} ${createBar(
         eventCounts.PoolCreated,
         chalk.green
       )}\n` +
-        `${chalk.yellow("Initialize:".padEnd(labelWidth))} ${createBar(
+        `${chalk.hex(uiColor)("Initialize:".padEnd(labelWidth))} ${createBar(
           eventCounts.Initialize,
           chalk.yellow
         )}\n` +
-        `${chalk.blue("Mint:".padEnd(labelWidth))} ${createBar(
+        `${chalk.hex(uiColor)("Mint:".padEnd(labelWidth))} ${createBar(
           eventCounts.Mint,
-          chalk.blue
+          chalk.blue // Switch back to blue from teal
         )}\n` +
-        `${chalk.red("Burn:".padEnd(labelWidth))} ${createBar(
+        `${chalk.hex(uiColor)("Burn:".padEnd(labelWidth))} ${createBar(
           eventCounts.Burn,
           chalk.red
         )}\n` +
-        `${chalk.magenta("Swap:".padEnd(labelWidth))} ${createBar(
+        `${chalk.hex(uiColor)("Swap:".padEnd(labelWidth))} ${createBar(
           eventCounts.Swap,
           chalk.magenta
         )}`
@@ -341,9 +331,9 @@ const main = async () => {
     //=========================================================================
     const height = await client.getHeight();
     logWindow.log(
-      `Starting scan from block ${chalk.cyan("0")} to ${chalk.cyan(
-        formatNumber(height)
-      )}`
+      `Starting scan from block ${chalk.hex(uiColor)("0")} to ${chalk.hex(
+        uiColor
+      )(formatNumber(height))}`
     );
     screen.render();
 
@@ -456,7 +446,7 @@ const main = async () => {
                 ? safeStringify(decodedLogs[0].event)
                 : "No event data";
               logWindow.log(
-                chalk.blue(
+                chalk.hex(uiColor)(
                   `Sample event at block ${res.nextBlock}: ${eventInfo}`
                 )
               );
@@ -490,13 +480,19 @@ const main = async () => {
       // Update stats display
       try {
         stats.setContent(
-          `${chalk.cyan("Current Block")}: ${formatNumber(res.nextBlock)}\n` +
-            `${chalk.cyan("Progress")}: ${(progress * 100).toFixed(2)}%\n` +
-            `${chalk.cyan("Total Events")}: ${formatNumber(
+          `${chalk.hex(uiColor)("Current Block")}: ${formatNumber(
+            res.nextBlock
+          )}\n` +
+            `${chalk.hex(uiColor)("Progress")}: ${(progress * 100).toFixed(
+              2
+            )}%\n` +
+            `${chalk.hex(uiColor)("Total Events")}: ${formatNumber(
               eventCounts.Total
             )}\n` +
-            `${chalk.cyan("Elapsed Time")}: ${seconds.toFixed(1)}s\n` +
-            `${chalk.cyan("Speed")}: ${formatNumber(eventsPerSecond)} events/s`
+            `${chalk.hex(uiColor)("Elapsed Time")}: ${seconds.toFixed(1)}s\n` +
+            `${chalk.hex(uiColor)("Speed")}: ${formatNumber(
+              eventsPerSecond
+            )} events/s`
         );
       } catch (statsError) {
         logWindow.log(
@@ -504,42 +500,22 @@ const main = async () => {
         );
       }
 
-      // Update event counter display
-      try {
-        eventCounter.setContent(
-          `${chalk.green("PoolCreated")}: ${formatNumber(
-            eventCounts.PoolCreated
-          )}\n` +
-            `${chalk.red("Burn")}: ${formatNumber(eventCounts.Burn)}\n` +
-            `${chalk.yellow("Initialize")}: ${formatNumber(
-              eventCounts.Initialize
-            )}\n` +
-            `${chalk.blue("Mint")}: ${formatNumber(eventCounts.Mint)}\n` +
-            `${chalk.magenta("Swap")}: ${formatNumber(eventCounts.Swap)}\n` +
-            `${chalk.gray("Unknown")}: ${formatNumber(eventCounts.Unknown)}`
-        );
-      } catch (counterError) {
-        logWindow.log(
-          chalk.yellow(`Counter update warning: ${counterError.message}`)
-        );
+      // Update event distribution periodically
+      if (res.nextBlock - lastDistributionUpdate >= 10000) {
+        updateEventDistribution(eventCounts);
+        lastDistributionUpdate = res.nextBlock;
       }
 
       // Log progress periodically to avoid too many updates
       if (res.nextBlock - lastLogUpdate >= 50000) {
         logWindow.log(
-          `${chalk.cyan("Block")} ${formatNumber(
+          `${chalk.hex(uiColor)("Block")} ${formatNumber(
             res.nextBlock
           )} | ${formatNumber(
             eventCounts.Total
           )} events | ${eventsPerSecond} events/s`
         );
         lastLogUpdate = res.nextBlock;
-      }
-
-      // Update event distribution periodically
-      if (res.nextBlock - lastDistributionUpdate >= 10000) {
-        updateEventDistribution(eventCounts);
-        lastDistributionUpdate = res.nextBlock;
       }
 
       // Render the updated screen
@@ -553,10 +529,12 @@ const main = async () => {
 
     // Update final stats
     stats.setContent(
-      `${chalk.cyan("Blocks Scanned")}: ${formatNumber(height)}\n` +
-        `${chalk.cyan("Total Events")}: ${formatNumber(eventCounts.Total)}\n` +
-        `${chalk.cyan("Elapsed Time")}: ${totalTime.toFixed(1)}s\n` +
-        `${chalk.cyan("Avg Speed")}: ${formatNumber(
+      `${chalk.hex(uiColor)("Blocks Scanned")}: ${formatNumber(height)}\n` +
+        `${chalk.hex(uiColor)("Total Events")}: ${formatNumber(
+          eventCounts.Total
+        )}\n` +
+        `${chalk.hex(uiColor)("Elapsed Time")}: ${totalTime.toFixed(1)}s\n` +
+        `${chalk.hex(uiColor)("Avg Speed")}: ${formatNumber(
           Math.round(eventCounts.Total / totalTime)
         )} events/s`
     );
@@ -619,3 +597,48 @@ main().catch((error) => {
     process.exit(1);
   }
 });
+
+// Find an eventName based on topic0
+const decodedEventName = (topic0) => {
+  if (!topic0) return "Unknown";
+  const idx = topic0_list.findIndex((t) => t === topic0);
+  if (idx < 0) return "Unknown";
+  // Extract name from signature (e.g. "Swap" from "Swap(...)")
+  return event_signatures[idx].split("(")[0];
+};
+
+// Format the sample event for display
+const formatSampleEvent = (event, name) => {
+  try {
+    // Show different info depending on the event type
+    switch (name) {
+      case "Swap":
+        return `${chalk.hex(uiColor)("Swap")}: Amount0=${formatNumber(
+          Math.abs(parseInt(event.data[0]))
+        )}, Amount1=${formatNumber(Math.abs(parseInt(event.data[1])))}`;
+      case "Mint":
+        return `${chalk.hex(uiColor)("Mint")}: Amount=${formatNumber(
+          parseInt(event.data[2])
+        )}`;
+      case "Burn":
+        return `${chalk.hex(uiColor)("Burn")}: Amount=${formatNumber(
+          parseInt(event.data[2])
+        )}`;
+      case "PoolCreated":
+        return `${chalk.hex(uiColor)(
+          "PoolCreated"
+        )}: Token0=${event.data[0].slice(
+          0,
+          10
+        )}..., Token1=${event.data[1].slice(0, 10)}...`;
+      case "Initialize":
+        return `${chalk.hex(uiColor)(
+          "Initialize"
+        )}: SqrtPriceX96=${formatNumber(parseInt(event.data[0]))}`;
+      default:
+        return `${chalk.hex(uiColor)(name)}`;
+    }
+  } catch (err) {
+    return `${chalk.hex(uiColor)(name)}: [Format Error]`;
+  }
+};
