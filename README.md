@@ -1,23 +1,23 @@
-# Uniswap V3 Event Tracker
+# Hypersync Quickstart
 
-A script that extracts and counts all events from Uniswap V3 pools on Ethereum mainnet using Hypersync.
-
-## Features
-
-- Tracks key events: PoolCreated, Burn, Initialize, Mint, and Swap
-- Streams data from the blockchain efficiently
-- Provides real-time statistics on event counts and processing speed
+Minimal example showing how to use Hypersync to stream blockchain events from Uniswap V3.
 
 ## Prerequisites
 
 - Node.js
 - pnpm
 
-## How to run it
+## How to run
 
-1. Install dependencies: `pnpm i`
-2. Run the script: `node run.js`
+```bash
+# Install dependencies
+pnpm i
 
-## Output
+# Run full version with UI
+node run.js
 
-The script will display event counts by type and performance metrics as it processes the blockchain data.
+# Run minimal version (recommended for beginners)
+node run-simple.js
+```
+
+The script streams events directly from Ethereum mainnet and displays progress as it scans the blockchain.
