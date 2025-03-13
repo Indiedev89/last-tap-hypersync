@@ -8,6 +8,20 @@ import {
   TransactionField,
 } from "@envio-dev/hypersync-client";
 
+// Function to create a simple ASCII progress bar
+const createProgressBar = (percentage, width = 40) => {
+  const filledWidth = Math.round(width * percentage);
+  const emptyWidth = width - filledWidth;
+  const filledBar = "█".repeat(filledWidth);
+  const emptyBar = "░".repeat(emptyWidth);
+  return `[${filledBar}${emptyBar}] ${(percentage * 100).toFixed(2)}%`;
+};
+
+// Function to clear the console line
+const clearLine = () => {
+  process.stdout.write("\r\x1b[K");
+};
+
 const event_signatures = [
   "PoolCreated(address,address,uint24,int24,address)",
   "Burn(address,int24,int24,uint128,uint256,uint256)",
@@ -68,6 +82,10 @@ const main = async () => {
 
   const startTime = performance.now();
 
+  // Get current blockchain height
+  const height = await client.getHeight();
+  console.log(`Starting scan from block 0 to current height: ${height}`);
+
   // Create a decoder for the event signatures
   const decoder = Decoder.fromSignatures(event_signatures);
 
@@ -79,7 +97,7 @@ const main = async () => {
 
     // Quit if we reached the tip
     if (res === null) {
-      console.log(`reached the tip`);
+      console.log(`\nReached the tip of the blockchain!`);
       break;
     }
 
@@ -114,7 +132,9 @@ const main = async () => {
 
       // Figure out decoder!!
       const decodedLogs = await decoder.decodeLogs(res.data.logs);
-      console.log(decodedLogs[0]);
+      if (decodedLogs && decodedLogs.length > 0) {
+        console.log(decodedLogs[0]);
+      }
     }
 
     // Update the fromBlock for the next iteration
@@ -124,19 +144,26 @@ const main = async () => {
 
     const currentTime = performance.now();
     const seconds = (currentTime - startTime) / 1000;
+    const logsPerSecond = (eventCounts.Total / seconds).toFixed(2);
 
-    console.log(
-      `scanned up to ${res.nextBlock} and got ${
-        eventCounts.Total
-      } logs. ${seconds.toFixed(2)} seconds elapsed. Logs per second: ${(
-        eventCounts.Total / seconds
-      ).toFixed(2)}`
+    // Calculate progress percentage
+    const progress = res.nextBlock / height;
+
+    // Clear the previous line and print the progress bar
+    clearLine();
+    process.stdout.write(
+      `${createProgressBar(progress)} Block: ${res.nextBlock}/${height} | ` +
+        `Events: ${eventCounts.Total} | ` +
+        `Time: ${seconds.toFixed(2)}s | ` +
+        `Speed: ${logsPerSecond} events/s`
     );
 
-    // Print event counts every batch
-    console.log(
-      `Event counts: PoolCreated=${eventCounts.PoolCreated}, Burn=${eventCounts.Burn}, Initialize=${eventCounts.Initialize}, Mint=${eventCounts.Mint}, Swap=${eventCounts.Swap}, Unknown=${eventCounts.Unknown}`
-    );
+    // Print event counts every 100 blocks (to avoid console spam)
+    if (res.nextBlock % 100 === 0) {
+      console.log(
+        `\nEvent counts: PoolCreated=${eventCounts.PoolCreated}, Burn=${eventCounts.Burn}, Initialize=${eventCounts.Initialize}, Mint=${eventCounts.Mint}, Swap=${eventCounts.Swap}, Unknown=${eventCounts.Unknown}`
+      );
+    }
   }
 
   // Final summary
