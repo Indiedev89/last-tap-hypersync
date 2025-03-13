@@ -21,3 +21,7 @@ node run-simple.js
 ```
 
 The script streams events directly from Ethereum mainnet and displays progress as it scans the blockchain.
+
+## Documentation
+
+For more information about Hypersync, visit the [official documentation](https://docs.envio.dev/docs/HyperSync/overview).
