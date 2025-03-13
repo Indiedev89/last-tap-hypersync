@@ -18,6 +18,9 @@ node run.js
 
 # Run minimal version (recommended for beginners)
 node run-simple.js
+
+# Run version with interactive terminal dashboard
+node run-tui.js
 ```
 
 The script streams events directly from Ethereum mainnet and displays progress as it scans the blockchain.
