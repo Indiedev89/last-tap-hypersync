@@ -10,6 +10,13 @@ import {
   Decoder,
 } from "@envio-dev/hypersync-client";
 
+// Define the target address to track approvals for (without 0x prefix for topic filtering)
+const TARGET_ADDRESS = "0x3EA751a05922A663AeabFA05a014daf8643D4a3D";
+const TARGET_ADDRESS_NO_PREFIX = TARGET_ADDRESS.substring(2).toLowerCase();
+// Address with padding for topic matching (addresses in topics are padded to 32 bytes)
+const TARGET_ADDRESS_PADDED =
+  "0x000000000000000000000000" + TARGET_ADDRESS_NO_PREFIX;
+
 // Define ERC20 event signatures
 const event_signatures = [
   "Transfer(address,address,uint256)",
@@ -30,24 +37,42 @@ topic0ToName[APPROVAL_TOPIC] = "Approval";
 
 // Initialize Hypersync client
 const client = HypersyncClient.new({
-  url: "http://unichain.hypersync.xyz",
+  url: "http://eth.hypersync.xyz",
 });
 
-// Define query for Uniswap V3 events
+// Define query for ERC20 events related to our target address
+// Using proper topic filtering based on HyperSync documentation
 let query = {
   fromBlock: 0,
   logs: [
+    // Filter for Approval events where target address is the owner (topic1)
     {
-      topics: [topic0_list],
+      topics: [[APPROVAL_TOPIC], [TARGET_ADDRESS_PADDED], []],
+    },
+    // Filter for Transfer events where target address is from (topic1)
+    {
+      topics: [[TRANSFER_TOPIC], [TARGET_ADDRESS_PADDED], []],
+    },
+    // Also get Transfer events where target address is to (topic2)
+    {
+      topics: [[TRANSFER_TOPIC], [], [TARGET_ADDRESS_PADDED]],
+    },
+  ],
+  // Also filter for transactions involving the target address
+  transactions: [
+    {
+      from: [TARGET_ADDRESS],
+    },
+    {
+      to: [TARGET_ADDRESS],
     },
   ],
   fieldSelection: {
-    // block: [BlockField.Number, BlockField.Timestamp, BlockField.Hash],
     log: [
-      // LogField.BlockNumber,
-      // LogField.LogIndex,
-      // LogField.TransactionIndex,
-      // LogField.TransactionHash,
+      LogField.BlockNumber,
+      LogField.LogIndex,
+      LogField.TransactionIndex,
+      LogField.TransactionHash,
       LogField.Data,
       LogField.Address,
       LogField.Topic0,
@@ -55,18 +80,17 @@ let query = {
       LogField.Topic2,
       LogField.Topic3,
     ],
-    // transaction: [
-    //   TransactionField.From,
-    //   TransactionField.To,
-    //   TransactionField.Hash,
-    //   TransactionField.Value,
-    // ],
+    transaction: [
+      TransactionField.From, // To track which address initiated transactions
+      TransactionField.To,
+      TransactionField.Hash,
+    ],
   },
-  joinMode: JoinMode.JoinTransactions,
+  joinMode: JoinMode.JoinTransactions, // Ensure we get transaction data for each log
 };
 
 const main = async () => {
-  console.log("Starting ERC20 event scan...");
+  console.log(`Starting approval tracking for address: ${TARGET_ADDRESS}...`);
 
   // Create decoder outside the loop for better performance
   const decoder = Decoder.fromSignatures([
@@ -74,12 +98,19 @@ const main = async () => {
     "Approval(address indexed owner, address indexed spender, uint256 amount)",
   ]);
 
+  // Track approvals by token and spender
+  // Format: { tokenAddress: { spenderAddress: { amount: BigInt, blockNumber: number } } }
+  const approvals = {};
+
+  // Track transfers that might be using approvals
+  // Format: { tokenAddress: { spenderAddress: usedAmount } }
+  const transfersUsingApprovals = {};
+
   let totalEvents = 0;
-  let totalTransfers = 0;
-  let totalApprovals = 0;
-  let totalTransferAmount = BigInt(0);
-  let totalApprovalAmount = BigInt(0);
   const startTime = performance.now();
+
+  // Track the tokens we've seen for final reporting
+  const tokenAddresses = new Set();
 
   // Start streaming events
   const stream = await client.stream(query, {});
@@ -93,15 +124,12 @@ const main = async () => {
       break;
     }
 
-    // Count total events
+    // Process events
     if (res.data && res.data.logs) {
       totalEvents += res.data.logs.length;
 
       // Decode logs
       const decodedLogs = await decoder.decodeLogs(res.data.logs);
-
-      // Track if we've printed an event for this batch
-      let printedEventThisBatch = false;
 
       // Process ERC20 events
       for (let i = 0; i < decodedLogs.length; i++) {
@@ -111,57 +139,81 @@ const main = async () => {
           continue;
         }
 
-        // Access the decoded values directly without using JSON.stringify
         try {
-          // Get the original raw log to access topic0
+          // Get the original raw log and transaction
           const rawLog = res.data.logs[i];
           if (!rawLog || !rawLog.topics || !rawLog.topics[0]) {
             continue;
           }
 
           const topic0 = rawLog.topics[0];
+          const tokenAddress = rawLog.address.toLowerCase();
+          tokenAddresses.add(tokenAddress);
 
-          if (topic0 === TRANSFER_TOPIC) {
-            // Get from and to from indexed parameters
-            const from = log.indexed[0]?.val.toString() || "unknown";
-            const to = log.indexed[1]?.val.toString() || "unknown";
-            const amount = log.body[0]?.val || BigInt(0);
+          // Find corresponding transaction for this log
+          const txHash = rawLog.transactionHash;
+          const transaction = res.data.transactions?.find(
+            (tx) => tx.hash === txHash
+          );
+          const txSender = transaction?.from?.toLowerCase() || null;
 
-            totalTransfers++;
-            totalTransferAmount += amount;
-
-            // Print details for just the first transfer event in each batch
-            if (!printedEventThisBatch) {
-              console.log(
-                "\nSample Transfer Event from Block " + res.nextBlock + ":"
-              );
-              console.log(`  From: ${from}`);
-              console.log(`  To: ${to}`);
-              console.log(`  Amount: ${amount.toString()}`);
-
-              // Mark that we've printed an event for this batch
-              printedEventThisBatch = true;
-            }
-          } else if (topic0 === APPROVAL_TOPIC) {
+          if (topic0 === APPROVAL_TOPIC) {
             // Get owner and spender from indexed parameters
-            const owner = log.indexed[0]?.val.toString() || "unknown";
-            const spender = log.indexed[1]?.val.toString() || "unknown";
+            const owner = log.indexed[0]?.val.toString().toLowerCase() || "";
+            const spender = log.indexed[1]?.val.toString().toLowerCase() || "";
             const amount = log.body[0]?.val || BigInt(0);
 
-            totalApprovals++;
-            totalApprovalAmount += amount;
+            // Only track approvals where the target address is the owner
+            if (owner === TARGET_ADDRESS.toLowerCase()) {
+              // Initialize token in approvals map if needed
+              if (!approvals[tokenAddress]) {
+                approvals[tokenAddress] = {};
+              }
 
-            // Print details for the first approval event in each batch if no transfer was printed
-            if (!printedEventThisBatch) {
+              // Store latest approval with block number for chronological ordering
+              approvals[tokenAddress][spender] = {
+                amount,
+                blockNumber: rawLog.blockNumber,
+                txHash,
+              };
+
               console.log(
-                "\nSample Approval Event from Block " + res.nextBlock + ":"
+                `New Approval at block ${
+                  rawLog.blockNumber
+                }: Token ${tokenAddress}, Spender ${spender}, Amount ${amount.toString()}`
               );
-              console.log(`  Owner: ${owner}`);
-              console.log(`  Spender: ${spender}`);
-              console.log(`  Amount: ${amount.toString()}`);
+            }
+          } else if (topic0 === TRANSFER_TOPIC) {
+            // Get from and to from indexed parameters
+            const from = log.indexed[0]?.val.toString().toLowerCase() || "";
+            const to = log.indexed[1]?.val.toString().toLowerCase() || "";
+            const amount = log.body[0]?.val || BigInt(0);
 
-              // Mark that we've printed an event for this batch
-              printedEventThisBatch = true;
+            // Track transfers where the target has approved a spender (from = target, to = any)
+            if (from === TARGET_ADDRESS.toLowerCase()) {
+              // Initialize token in transfers map if needed
+              if (!transfersUsingApprovals[tokenAddress]) {
+                transfersUsingApprovals[tokenAddress] = {};
+              }
+
+              // A transfer using approval would typically be initiated by someone other than the owner
+              if (txSender && txSender !== from.toLowerCase()) {
+                // This is likely a transfer using an approval - track it against the tx sender (spender)
+                if (!transfersUsingApprovals[tokenAddress][txSender]) {
+                  transfersUsingApprovals[tokenAddress][txSender] = BigInt(0);
+                }
+
+                transfersUsingApprovals[tokenAddress][txSender] += amount;
+
+                console.log(`Transfer using approval at block ${
+                  rawLog.blockNumber
+                }: 
+                  Token: ${tokenAddress}, 
+                  From: ${from}, 
+                  To: ${to}, 
+                  Amount: ${amount.toString()}, 
+                  Tx Sender (Spender): ${txSender}`);
+              }
             }
           }
         } catch (error) {
@@ -185,15 +237,80 @@ const main = async () => {
     );
   }
 
+  // Calculate and print outstanding approvals
+  console.log("\n========== OUTSTANDING APPROVALS ==========");
+  console.log(`ADDRESS: ${TARGET_ADDRESS}`);
+  console.log("==========================================\n");
+
+  let hasOutstandingApprovals = false;
+
+  // Iterate through all tokens we've seen
+  for (const tokenAddress of tokenAddresses) {
+    let tokenHasApprovals = false;
+    const tokenApprovals = approvals[tokenAddress] || {};
+
+    // Process each spender for this token
+    for (const spender in tokenApprovals) {
+      const { amount: approvedAmount, blockNumber } = tokenApprovals[spender];
+
+      // Get transferred amount (if any)
+      const transferredAmount =
+        transfersUsingApprovals[tokenAddress]?.[spender] || BigInt(0);
+
+      // Calculate remaining approval
+      let remainingApproval;
+      let isUnlimited = false;
+
+      // Check for unlimited approval (common value is 2^256-1)
+      if (
+        approvedAmount === BigInt(2) ** BigInt(256) - BigInt(1) ||
+        approvedAmount ===
+          BigInt(
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          )
+      ) {
+        remainingApproval = approvedAmount;
+        isUnlimited = true;
+      } else {
+        // For limited approvals, subtract used amount
+        remainingApproval =
+          approvedAmount > transferredAmount
+            ? approvedAmount - transferredAmount
+            : BigInt(0);
+      }
+
+      // Only display if there's a remaining approval
+      if (remainingApproval > 0) {
+        if (!tokenHasApprovals) {
+          console.log(`\nTOKEN: ${tokenAddress}`);
+          tokenHasApprovals = true;
+          hasOutstandingApprovals = true;
+        }
+
+        console.log(`  SPENDER: ${spender}`);
+        console.log(`  APPROVED AMOUNT: ${approvedAmount.toString()}`);
+        console.log(`  USED AMOUNT: ${transferredAmount.toString()}`);
+        console.log(`  REMAINING APPROVAL: ${remainingApproval.toString()}`);
+        console.log(`  APPROVED AT BLOCK: ${blockNumber}`);
+
+        if (isUnlimited) {
+          console.log(`  ⚠️ UNLIMITED APPROVAL`);
+        }
+
+        console.log("  ----------------------------------------");
+      }
+    }
+  }
+
+  if (!hasOutstandingApprovals) {
+    console.log("\nNo outstanding approvals found.");
+  }
+
   // Print final results
   const totalTime = (performance.now() - startTime) / 1000;
   console.log(
     `\nScan complete: ${totalEvents} events in ${totalTime.toFixed(1)} seconds`
   );
-  console.log(`Total Transfer Events: ${totalTransfers}`);
-  console.log(`Total Approval Events: ${totalApprovals}`);
-  console.log(`Total Transfer Amount: ${totalTransferAmount.toString()}`);
-  console.log(`Total Approval Amount: ${totalApprovalAmount.toString()}`);
 };
 
 main().catch((error) => {
