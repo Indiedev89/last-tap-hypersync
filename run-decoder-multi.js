@@ -196,13 +196,19 @@ const main = async () => {
                 transfersUsingApprovals[tokenAddress] = {};
               }
 
-              // A transfer using approval would typically be initiated by someone other than the owner
-              if (txSender && txSender !== from.toLowerCase()) {
-                // This is likely a transfer using an approval - track it against the tx sender (spender)
+              // Check two cases:
+              // 1. Transaction initiated by spender (typical approval usage)
+              // 2. Transaction initiated by owner but sent to a contract with approval
+              const isSpenderInitiated =
+                txSender && txSender !== from.toLowerCase();
+              const isOwnerInitiatedToSpender =
+                txSender === from.toLowerCase() && transaction?.to;
+
+              if (isSpenderInitiated) {
+                // Track against the transaction sender (spender)
                 if (!transfersUsingApprovals[tokenAddress][txSender]) {
                   transfersUsingApprovals[tokenAddress][txSender] = BigInt(0);
                 }
-
                 transfersUsingApprovals[tokenAddress][txSender] += amount;
 
                 console.log(`Transfer using approval at block ${
@@ -213,6 +219,27 @@ const main = async () => {
                   To: ${to}, 
                   Amount: ${amount.toString()}, 
                   Tx Sender (Spender): ${txSender}`);
+              } else if (isOwnerInitiatedToSpender) {
+                // When owner initiates a transaction to a spender, check if the transaction.to
+                // address matches any approved spender for this token
+                const txTo = transaction.to.toLowerCase();
+
+                // Check if txTo is an approved spender
+                if (approvals[tokenAddress]?.[txTo]) {
+                  if (!transfersUsingApprovals[tokenAddress][txTo]) {
+                    transfersUsingApprovals[tokenAddress][txTo] = BigInt(0);
+                  }
+                  transfersUsingApprovals[tokenAddress][txTo] += amount;
+
+                  console.log(`Owner-initiated transfer to spender at block ${
+                    rawLog.blockNumber
+                  }: 
+                    Token: ${tokenAddress}, 
+                    From: ${from}, 
+                    To: ${to}, 
+                    Amount: ${amount.toString()}, 
+                    Tx Recipient (Spender): ${txTo}`);
+                }
               }
             }
           }
@@ -292,6 +319,7 @@ const main = async () => {
         console.log(`  USED AMOUNT: ${transferredAmount.toString()}`);
         console.log(`  REMAINING APPROVAL: ${remainingApproval.toString()}`);
         console.log(`  APPROVED AT BLOCK: ${blockNumber}`);
+        console.log(`  TX HASH: ${tokenApprovals[spender].txHash}`);
 
         if (isUnlimited) {
           console.log(`  ⚠️ UNLIMITED APPROVAL`);
