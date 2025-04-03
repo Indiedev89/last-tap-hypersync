@@ -21,7 +21,8 @@ const topic0_list = event_signatures.map((sig) => keccak256(toHex(sig)));
 
 // Initialize Hypersync client
 const client = HypersyncClient.new({
-  url: "http://eth.hypersync.xyz",
+  url: "http://monad-testnet.hypersync.xyz",
+  bearerToken: "2971bfd6-a86a-44d0-b1e3-5a0011666aed",
 });
 
 // Define query for Uniswap V3 events

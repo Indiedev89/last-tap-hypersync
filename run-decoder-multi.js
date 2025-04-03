@@ -11,7 +11,7 @@ import {
 } from "@envio-dev/hypersync-client";
 
 // Define the target address to track approvals for (without 0x prefix for topic filtering)
-const TARGET_ADDRESS = "0x3EA751a05922A663AeabFA05a014daf8643D4a3D";
+const TARGET_ADDRESS = "0x7C25a8C86A04f40F2Db0434ab3A24b051FB3cA58";
 const TARGET_ADDRESS_NO_PREFIX = TARGET_ADDRESS.substring(2).toLowerCase();
 // Address with padding for topic matching (addresses in topics are padded to 32 bytes)
 const TARGET_ADDRESS_PADDED =
