@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node run-last-tap-indexer.js"
+    "dev": "node run-last-tap-indexer.js",
+    "start": "node run.js"
   },
   "keywords": [],
   "author": "",
