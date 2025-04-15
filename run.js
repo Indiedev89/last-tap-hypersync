@@ -82,35 +82,29 @@ const log = (message, level = "normal") => {
   }
 };
 
-// Main function
-async function main() {
-  // Track metrics
-  let eventCounts = {
-    Tapped: 0,
-    RoundEnded: 0,
-  };
+// Track metrics
+let eventCounts = {
+  Tapped: 0,
+  RoundEnded: 0,
+};
 
-  // Track game state
-  let currentRound = null;
-  let lastTapper = null;
-  let tapCost = null;
-  let lastWinner = null;
-  let lastPrize = null;
+// Track game state
+let currentRound = null;
+let lastTapper = null;
+let tapCost = null;
+let lastWinner = null;
+let lastPrize = null;
+let currentBlock = CONFIG.startBlock;
+let startTime = performance.now();  // Add this line!
 
-  // Start time for tracking
-  const startTime = performance.now();
 
-  // Track chain tip status to avoid log spam
-  let lastTipReachedTime = 0;
-  let chainTipReportInterval = 5 * 60 * 1000; // Report chain tip status every 5 minutes
+// Create a simple HTTP server to keep Railway happy
+const server = http.createServer((req, res) => {
+  // Create a simple status page
+  const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
+  const uptime = ((performance.now() - startTime) / 1000).toFixed(0);
 
-  // Create a simple HTTP server to keep Railway happy
-  const server = http.createServer((req, res) => {
-    // Create a simple status page
-    const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
-    const uptime = ((performance.now() - startTime) / 1000).toFixed(0);
-
-    const html = `
+  const html = `
     <!DOCTYPE html>
     <html>
     <head>
@@ -141,21 +135,30 @@ async function main() {
         }</p>
         <p><strong>Last Prize:</strong> ${formatEth(lastPrize) || "Unknown"}</p>
         <p><strong>Events Processed:</strong> ${totalEvents} (${
-      eventCounts.Tapped
-    } Taps, ${eventCounts.RoundEnded} Round Ends)</p>
+    eventCounts.Tapped
+  } Taps, ${eventCounts.RoundEnded} Round Ends)</p>
       </div>
       <p><em>Note: The tracker is running in the background. This page only shows the current status.</em></p>
     </body>
     </html>
     `;
 
-    res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(html);
-  });
+  res.writeHead(200, { "Content-Type": "text/html" });
+  res.end(html);
+});
 
-  server.listen(8080, () => {
-    log("Status web server running on port 8080", "startup");
-  });
+server.listen(8080, () => {
+  log("Status web server running on port 8080", "startup");
+});
+
+// Main function
+async function main() {
+  // Start time for tracking
+  const startTime = performance.now();
+
+  // Track chain tip status to avoid log spam
+  let lastTipReachedTime = 0;
+  let chainTipReportInterval = 5 * 60 * 1000; // Report chain tip status every 5 minutes
 
   try {
     log("Starting Last Tap Game Event Tracker...", "startup");
