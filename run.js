@@ -6,6 +6,7 @@ import {
   JoinMode,
   Decoder,
 } from "@envio-dev/hypersync-client";
+import http from "http";
 
 // Configuration
 const CONFIG = {
@@ -30,8 +31,12 @@ const client = HypersyncClient.new({
 });
 
 // Define event signatures and hashes
-const TAPPED_TOPIC = keccak256(toHex("Tapped(address,uint256,uint256,uint256)"));
-const ROUND_ENDED_TOPIC = keccak256(toHex("RoundEnded(address,uint256,uint256,uint256)"));
+const TAPPED_TOPIC = keccak256(
+  toHex("Tapped(address,uint256,uint256,uint256)")
+);
+const ROUND_ENDED_TOPIC = keccak256(
+  toHex("RoundEnded(address,uint256,uint256,uint256)")
+);
 const topic0_list = [TAPPED_TOPIC, ROUND_ENDED_TOPIC];
 
 const POLLING_INTERVAL = 200; //ms
@@ -39,7 +44,9 @@ const POLLING_INTERVAL = 200; //ms
 // Helper functions
 const formatAddress = (address) => {
   if (!address || address.length < 12) return address;
-  return `${address.substring(0, 8)}...${address.substring(address.length - 4)}`;
+  return `${address.substring(0, 8)}...${address.substring(
+    address.length - 4
+  )}`;
 };
 
 const formatEth = (wei) => {
@@ -58,11 +65,19 @@ const log = (message, level = "normal") => {
     return;
   }
 
-  if (CONFIG.logLevel === "event-only" && level !== "event" && level !== "startup") {
+  if (
+    CONFIG.logLevel === "event-only" &&
+    level !== "event" &&
+    level !== "startup"
+  ) {
     return;
   }
 
-  if (CONFIG.logLevel === "normal" || level === "event" || level === "startup") {
+  if (
+    CONFIG.logLevel === "normal" ||
+    level === "event" ||
+    level === "startup"
+  ) {
     console.log(message);
   }
 };
@@ -72,7 +87,7 @@ async function main() {
   // Track metrics
   let eventCounts = {
     Tapped: 0,
-    RoundEnded: 0
+    RoundEnded: 0,
   };
 
   // Track game state
@@ -88,6 +103,59 @@ async function main() {
   // Track chain tip status to avoid log spam
   let lastTipReachedTime = 0;
   let chainTipReportInterval = 5 * 60 * 1000; // Report chain tip status every 5 minutes
+
+  // Create a simple HTTP server to keep Railway happy
+  const server = http.createServer((req, res) => {
+    // Create a simple status page
+    const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
+    const uptime = ((performance.now() - startTime) / 1000).toFixed(0);
+
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Last Tap Tracker Status</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; }
+        h1 { color: #FF6B6B; }
+        .stats { background: #f4f4f4; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        .event { margin: 10px 0; padding: 10px; border-left: 4px solid #FF6B6B; }
+      </style>
+    </head>
+    <body>
+      <h1>Last Tap Game Event Tracker</h1>
+      <div class="stats">
+        <p><strong>Status:</strong> Running</p>
+        <p><strong>Uptime:</strong> ${uptime} seconds</p>
+        <p><strong>Current Block:</strong> ${currentBlock}</p>
+        <p><strong>Current Round:</strong> ${currentRound || "Unknown"}</p>
+        <p><strong>Last Tapper:</strong> ${
+          formatAddress(lastTapper) || "Unknown"
+        }</p>
+        <p><strong>Current Tap Cost:</strong> ${
+          formatEth(tapCost) || "Unknown"
+        }</p>
+        <p><strong>Last Winner:</strong> ${
+          formatAddress(lastWinner) || "Unknown"
+        }</p>
+        <p><strong>Last Prize:</strong> ${formatEth(lastPrize) || "Unknown"}</p>
+        <p><strong>Events Processed:</strong> ${totalEvents} (${
+      eventCounts.Tapped
+    } Taps, ${eventCounts.RoundEnded} Round Ends)</p>
+      </div>
+      <p><em>Note: The tracker is running in the background. This page only shows the current status.</em></p>
+    </body>
+    </html>
+    `;
+
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(html);
+  });
+
+  server.listen(8080, () => {
+    log("Status web server running on port 8080", "startup");
+  });
 
   try {
     log("Starting Last Tap Game Event Tracker...", "startup");
@@ -141,12 +209,17 @@ async function main() {
 
         // Only log chain tip status occasionally to reduce spam
         if (now - lastTipReachedTime > chainTipReportInterval) {
-          log(`Waiting for new blocks... (Been at chain tip for ${Math.floor(consecutiveChainTips * 5)} seconds)`, "verbose");
+          log(
+            `Waiting for new blocks... (Been at chain tip for ${Math.floor(
+              consecutiveChainTips * 5
+            )} seconds)`,
+            "verbose"
+          );
           lastTipReachedTime = now;
         }
 
         // Wait for new blocks
-        await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL));
+        await new Promise((resolve) => setTimeout(resolve, POLLING_INTERVAL));
 
         try {
           // Check for new blocks
@@ -200,9 +273,13 @@ async function main() {
             tapCost = tapCostPaid;
 
             // Log the event
-            log(`TAPPED | Round: ${roundNumber} | Tapper: ${formatAddress(tapper)} | Cost: ${formatEth(tapCostPaid)} | ${date}`, "event");
-          }
-          else if (eventType === "RoundEnded") {
+            log(
+              `TAPPED | Round: ${roundNumber} | Tapper: ${formatAddress(
+                tapper
+              )} | Cost: ${formatEth(tapCostPaid)} | ${date}`,
+              "event"
+            );
+          } else if (eventType === "RoundEnded") {
             eventCounts.RoundEnded++;
 
             // Extract data
@@ -218,7 +295,12 @@ async function main() {
             currentRound = (parseInt(roundNumber) + 1).toString();
 
             // Log the event
-            log(`ROUND ENDED | Round: ${roundNumber} | Winner: ${formatAddress(winner)} | Prize: ${formatEth(prizeAmount)} | ${date}`, "event");
+            log(
+              `ROUND ENDED | Round: ${roundNumber} | Winner: ${formatAddress(
+                winner
+              )} | Prize: ${formatEth(prizeAmount)} | ${date}`,
+              "event"
+            );
           }
         }
       }
@@ -232,7 +314,14 @@ async function main() {
         if (currentBlock - lastProgressLogBlock >= 10000) {
           const seconds = (performance.now() - startTime) / 1000;
           const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
-          log(`Block ${currentBlock} | ${totalEvents} events (${eventCounts.Tapped} Tapped, ${eventCounts.RoundEnded} RoundEnded) | ${seconds.toFixed(1)}s`, "normal");
+          log(
+            `Block ${currentBlock} | ${totalEvents} events (${
+              eventCounts.Tapped
+            } Tapped, ${eventCounts.RoundEnded} RoundEnded) | ${seconds.toFixed(
+              1
+            )}s`,
+            "normal"
+          );
           lastProgressLogBlock = currentBlock;
         }
       }
@@ -242,7 +331,7 @@ async function main() {
 
     // Wait a bit and restart the application
     log("Restarting in 30 seconds...", "normal");
-    await new Promise(resolve => setTimeout(resolve, 30000));
+    await new Promise((resolve) => setTimeout(resolve, 30000));
     main();
   }
 }
@@ -253,7 +342,7 @@ process.on("unhandledRejection", (error) => {
 });
 
 // Start the application
-main().catch(error => {
+main().catch((error) => {
   log(`Startup error: ${error.message}`, "error");
   // Restart after a delay
   setTimeout(() => main(), 30000);
