@@ -1,46 +1,53 @@
-# Hypersync Quickstart
+# Last Tap Game Event Tracker
 
-Minimal example showing how to use Hypersync to stream blockchain events from Uniswap V3.
+A beautiful terminal UI application for monitoring real-time events from the Last Tap Game on MegaETH testnet using Hypersync.
 
 ## Prerequisites
 
-- Node.js
-- pnpm
+* [Node.js](https://nodejs.org/)
+* [npm](https://www.npmjs.com/) or [pnpm](https://pnpm.io/)
+
+## About
+
+This script streams events directly from the MegaETH testnet and displays them in a beautiful terminal interface, showing real-time game state, event tracking, and statistics.
+
+* Note: To use other networks, change the network in the CONFIG section at the top of the script. Supported networks include Ethereum, Arbitrum, Optimism, and others.
+
+## Features
+
+* Real-time tracking of Tapped and RoundEnded events
+* Beautiful terminal UI with live updates
+* Current round information display
+* Event statistics and distribution visualization
+* Progress bar showing blockchain scanning status
+* Continuous monitoring with automatic detection of new blocks
+
+## Configuration
+
+You can adjust the following settings in the CONFIG object at the top of the file:
+
+* `contractAddress`: The address of the Last Tap game contract
+* `startBlock`: The block number to start scanning from
+* `network`: The network to connect to (e.g., "ethereum", "arbitrum", "megaethTestnet")
 
 ## How to run
 
 ```bash
 # Install dependencies
+npm install
+# or with pnpm
 pnpm i
 
-# Run full version with UI
-node run.js
-
-# Run minimal version (recommended for beginners)
-node run-simple.js
-
-# Run version with interactive terminal dashboard
-node run-tui.js
-
-# Run single event decoder example (Uniswap V3 swaps)
-node run-decoder.js
-
-# Run multi-event decoder example (ERC20 Transfer and Approval events)
-node run-decoder-multi.js
+# Run the terminal UI tracker
+npm start
+# or with pnpm
+pnpm start
 ```
 
-The script streams events directly from Ethereum mainnet and displays progress as it scans the blockchain.
+## Controls
 
-> **Note:** To use other networks, change the URL in `client = HypersyncClient.new({url: "http://eth.hypersync.xyz"})`. See [documentation](https://docs.envio.dev/docs/HyperSync/overview) for supported networks.
+Press `q`, `Escape`, or `Ctrl+C` to exit the application
 
-## Example Files
+## About Last Tap Game
 
-- `run.js` - Main example with UI for tracking Uniswap V3 events
-- `run-simple.js` - Simplified version for beginners
-- `run-tui.js` - Example with interactive terminal dashboard
-- `run-decoder.js` - Shows how to use Hypersync's decoder to parse Uniswap V3 swap events
-- `run-decoder-multi.js` - Demonstrates decoding multiple event types (ERC20 Transfer and Approval)
-
-## Documentation
-
-For more information about Hypersync, visit the [official documentation](https://docs.envio.dev/docs/HyperSync/overview).
+Last Tap is a competitive blockchain game where players tap to stay in the game. The last player to tap wins the round and takes the prize. Each tap increases in cost, creating exciting gameplay dynamics.
