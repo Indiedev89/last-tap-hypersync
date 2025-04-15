@@ -12,6 +12,7 @@ const CONFIG = {
   contractAddress: "0x16ED00aC93b37B7481eD3CCfa2a87C342aCB816C",
   startBlock: 3258331,
   network: "megaethTestnet",
+  logLevel: "event-only", // 'verbose', 'normal', 'event-only'
 };
 
 // Network URL mapping
@@ -50,6 +51,22 @@ const formatEth = (wei) => {
   }
 };
 
+// Logging function that respects log level
+const log = (message, level = "normal") => {
+  if (level === "error") {
+    console.error(message);
+    return;
+  }
+
+  if (CONFIG.logLevel === "event-only" && level !== "event" && level !== "startup") {
+    return;
+  }
+
+  if (CONFIG.logLevel === "normal" || level === "event" || level === "startup") {
+    console.log(message);
+  }
+};
+
 // Main function
 async function main() {
   // Track metrics
@@ -68,12 +85,16 @@ async function main() {
   // Start time for tracking
   const startTime = performance.now();
 
+  // Track chain tip status to avoid log spam
+  let lastTipReachedTime = 0;
+  let chainTipReportInterval = 5 * 60 * 1000; // Report chain tip status every 5 minutes
+
   try {
-    console.log("Starting Last Tap Game Event Tracker...");
+    log("Starting Last Tap Game Event Tracker...", "startup");
 
     // Get chain height
     const height = await client.getHeight();
-    console.log(`Chain height: ${height}`);
+    log(`Chain height: ${height}`, "startup");
 
     // Create decoder
     const decoder = Decoder.fromSignatures([
@@ -102,10 +123,12 @@ async function main() {
       joinMode: JoinMode.JoinNothing,
     };
 
-    console.log("Starting event stream...");
+    log("Starting event stream...", "startup");
     let stream = await client.stream(query, {});
 
     let currentBlock = CONFIG.startBlock;
+    let lastProgressLogBlock = currentBlock;
+    let consecutiveChainTips = 0;
 
     // Main event loop
     while (true) {
@@ -113,7 +136,14 @@ async function main() {
 
       // Check if we've reached chain tip
       if (res === null) {
-        console.log("Reached chain tip. Waiting for new blocks...");
+        const now = Date.now();
+        consecutiveChainTips++;
+
+        // Only log chain tip status occasionally to reduce spam
+        if (now - lastTipReachedTime > chainTipReportInterval) {
+          log(`Waiting for new blocks... (Been at chain tip for ${Math.floor(consecutiveChainTips * 5)} seconds)`, "verbose");
+          lastTipReachedTime = now;
+        }
 
         // Wait for new blocks
         await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL));
@@ -123,18 +153,22 @@ async function main() {
           const newHeight = await client.getHeight();
 
           if (newHeight > height) {
-            console.log(`Chain advanced to ${newHeight}`);
+            log(`Chain advanced to ${newHeight}`, "verbose");
+            consecutiveChainTips = 0;
 
             // Restart stream
             await stream.close();
             stream = await client.stream(query, {});
           }
         } catch (err) {
-          console.error(`Error checking height: ${err.message}`);
+          log(`Error checking height: ${err.message}`, "error");
         }
 
         continue;
       }
+
+      // Reset consecutive chain tips counter
+      consecutiveChainTips = 0;
 
       // Process logs
       if (res.data && res.data.logs && res.data.logs.length > 0) {
@@ -166,7 +200,7 @@ async function main() {
             tapCost = tapCostPaid;
 
             // Log the event
-            console.log(`TAPPED | Round: ${roundNumber} | Tapper: ${formatAddress(tapper)} | Cost: ${formatEth(tapCostPaid)} | ${date}`);
+            log(`TAPPED | Round: ${roundNumber} | Tapper: ${formatAddress(tapper)} | Cost: ${formatEth(tapCostPaid)} | ${date}`, "event");
           }
           else if (eventType === "RoundEnded") {
             eventCounts.RoundEnded++;
@@ -184,7 +218,7 @@ async function main() {
             currentRound = (parseInt(roundNumber) + 1).toString();
 
             // Log the event
-            console.log(`ROUND ENDED | Round: ${roundNumber} | Winner: ${formatAddress(winner)} | Prize: ${formatEth(prizeAmount)} | ${date}`);
+            log(`ROUND ENDED | Round: ${roundNumber} | Winner: ${formatAddress(winner)} | Prize: ${formatEth(prizeAmount)} | ${date}`, "event");
           }
         }
       }
@@ -194,19 +228,20 @@ async function main() {
         currentBlock = res.nextBlock;
         query.fromBlock = currentBlock;
 
-        // Log progress occasionally
-        if (currentBlock % 1000 === 0) {
+        // Log progress occasionally (every 10,000 blocks) to avoid log spam
+        if (currentBlock - lastProgressLogBlock >= 10000) {
           const seconds = (performance.now() - startTime) / 1000;
           const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
-          console.log(`Block ${currentBlock} | ${totalEvents} events (${eventCounts.Tapped} Tapped, ${eventCounts.RoundEnded} RoundEnded) | ${seconds.toFixed(1)}s`);
+          log(`Block ${currentBlock} | ${totalEvents} events (${eventCounts.Tapped} Tapped, ${eventCounts.RoundEnded} RoundEnded) | ${seconds.toFixed(1)}s`, "normal");
+          lastProgressLogBlock = currentBlock;
         }
       }
     }
   } catch (error) {
-    console.error(`Fatal error: ${error.message}`);
+    log(`Fatal error: ${error.message}`, "error");
 
     // Wait a bit and restart the application
-    console.log("Restarting in 30 seconds...");
+    log("Restarting in 30 seconds...", "normal");
     await new Promise(resolve => setTimeout(resolve, 30000));
     main();
   }
@@ -214,12 +249,12 @@ async function main() {
 
 // Handle unhandled promise rejections
 process.on("unhandledRejection", (error) => {
-  console.error(`Unhandled promise rejection: ${error.message}`);
+  log(`Unhandled promise rejection: ${error.message}`, "error");
 });
 
 // Start the application
 main().catch(error => {
-  console.error(`Startup error: ${error.message}`);
+  log(`Startup error: ${error.message}`, "error");
   // Restart after a delay
   setTimeout(() => main(), 30000);
 });
