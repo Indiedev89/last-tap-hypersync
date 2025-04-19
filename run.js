@@ -29,27 +29,38 @@ const CONFIG = {
 // --- Helper Functions (Logging, Formatting - Unchanged) ---
 // Logging function
 const log = (message, level = "normal") => {
-    const timestamp = new Date().toISOString();
-    const logMessage = `${timestamp} [${level.toUpperCase()}] ${message}`;
+  const timestamp = new Date().toISOString();
+  const logMessage = `${timestamp} [${level.toUpperCase()}] ${message}`;
 
-    if (level === "error") {
-        console.error(logMessage);
-        return;
-    }
+  if (level === "error") {
+    console.error(logMessage);
+    return;
+  }
 
-    // Simplified logging logic for brevity (keep your original if preferred)
-    if (CONFIG.logLevel === 'verbose' || level === 'event' || level === 'startup' || level === 'supabase' || level === 'db_setup') {
-        console.log(logMessage);
-    } else if (CONFIG.logLevel === 'normal' && level !== 'verbose') {
-         console.log(logMessage);
-    } else if (CONFIG.logLevel === 'event-only' && (level === 'event' || level === 'startup' || level === 'db_setup')) {
-         console.log(logMessage);
-    }
+  // Simplified logging logic for brevity (keep your original if preferred)
+  if (
+    CONFIG.logLevel === "verbose" ||
+    level === "event" ||
+    level === "startup" ||
+    level === "supabase" ||
+    level === "db_setup"
+  ) {
+    console.log(logMessage);
+  } else if (CONFIG.logLevel === "normal" && level !== "verbose") {
+    console.log(logMessage);
+  } else if (
+    CONFIG.logLevel === "event-only" &&
+    (level === "event" || level === "startup" || level === "db_setup")
+  ) {
+    console.log(logMessage);
+  }
 };
 
 const formatAddress = (address) => {
   if (!address || address.length < 12) return address || "N/A";
-  return `${address.substring(0, 8)}...${address.substring(address.length - 4)}`;
+  return `${address.substring(0, 8)}...${address.substring(
+    address.length - 4
+  )}`;
 };
 
 const formatEth = (wei) => {
@@ -66,19 +77,41 @@ const formatEth = (wei) => {
 
 // --- Validate Configuration ---
 if (!CONFIG.supabaseUrl || !CONFIG.supabaseServiceKey) {
-  log("Error: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables are required.", "error");
+  log(
+    "Error: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables are required.",
+    "error"
+  );
   process.exit(1);
 }
 if (!CONFIG.supabaseDbConnectionString) {
-  log("Error: SUPABASE_DB_CONNECTION_STRING environment variable is required for initial setup.", "error");
+  log(
+    "Error: SUPABASE_DB_CONNECTION_STRING environment variable is required for initial setup.",
+    "error"
+  );
   process.exit(1);
 }
 
 // Log environment variables format check (without revealing full values)
-log(`SUPABASE_URL format check: ${CONFIG.supabaseUrl?.startsWith('https://') ? 'OK' : 'INVALID'}`, "startup");
-log(`SUPABASE_SERVICE_ROLE_KEY length check: ${CONFIG.supabaseServiceKey?.length > 30 ? 'OK' : 'INVALID'}`, "startup");
-log(`SUPABASE_DB_CONNECTION_STRING format check: ${CONFIG.supabaseDbConnectionString?.startsWith('postgresql://') ? 'OK' : 'INVALID'}`, "startup");
-
+log(
+  `SUPABASE_URL format check: ${
+    CONFIG.supabaseUrl?.startsWith("https://") ? "OK" : "INVALID"
+  }`,
+  "startup"
+);
+log(
+  `SUPABASE_SERVICE_ROLE_KEY length check: ${
+    CONFIG.supabaseServiceKey?.length > 30 ? "OK" : "INVALID"
+  }`,
+  "startup"
+);
+log(
+  `SUPABASE_DB_CONNECTION_STRING format check: ${
+    CONFIG.supabaseDbConnectionString?.startsWith("postgresql://")
+      ? "OK"
+      : "INVALID"
+  }`,
+  "startup"
+);
 
 // --- Network URL mapping (Unchanged) ---
 const NETWORK_URLS = {
@@ -247,7 +280,9 @@ $$;
 // --- Database Setup Function ---
 async function runDatabaseSetup() {
   log("Starting database schema setup...", "db_setup");
-  const pool = new Pool({ connectionString: CONFIG.supabaseDbConnectionString });
+  const pool = new Pool({
+    connectionString: CONFIG.supabaseDbConnectionString,
+  });
   let client; // Declare client outside try block
 
   try {
@@ -271,7 +306,6 @@ async function runDatabaseSetup() {
   }
 }
 
-
 // --- Event Signatures and Topics (Unchanged) ---
 const TAPPED_TOPIC = keccak256(
   toHex("Tapped(address,uint256,uint256,uint256)")
@@ -284,7 +318,13 @@ const topic0_list = [TAPPED_TOPIC, ROUND_ENDED_TOPIC];
 const POLLING_INTERVAL = 200; // ms
 
 // --- Metrics and State (Unchanged) ---
-let eventCounts = { Tapped: 0, RoundEnded: 0, SupabaseBatchesSent: 0, SupabaseEventsUpserted: 0, SupabaseErrors: 0 };
+let eventCounts = {
+  Tapped: 0,
+  RoundEnded: 0,
+  SupabaseBatchesSent: 0,
+  SupabaseEventsUpserted: 0,
+  SupabaseErrors: 0,
+};
 let currentRound = null;
 let lastTapper = null;
 let tapCost = null;
@@ -309,22 +349,29 @@ async function batchUpsertEventsWithRetry(tableName, batchData) {
       });
       if (error) {
         log(
-          `Supabase batch upsert error (Attempt ${attempts}/${CONFIG.maxRetries}, Table: ${tableName}, Size: ${batchSize}): ${
+          `Supabase batch upsert error (Attempt ${attempts}/${
+            CONFIG.maxRetries
+          }, Table: ${tableName}, Size: ${batchSize}): ${
             error.message || JSON.stringify(error)
           }`,
           "error"
         );
         if (attempts < CONFIG.maxRetries) {
           const delay = Math.pow(2, attempts - 1) * CONFIG.retryBaseDelay;
-          log(`Retrying batch upsert to ${tableName} in ${delay}ms`, "supabase");
-          await new Promise(resolve => setTimeout(resolve, delay));
+          log(
+            `Retrying batch upsert to ${tableName} in ${delay}ms`,
+            "supabase"
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
         } else {
           eventCounts.SupabaseErrors += batchSize;
           return { success: false, error };
         }
       } else {
         log(
-          `Successfully upserted batch of ${batchSize} events to ${tableName}${attempts > 1 ? ` after ${attempts} attempts` : ''}`,
+          `Successfully upserted batch of ${batchSize} events to ${tableName}${
+            attempts > 1 ? ` after ${attempts} attempts` : ""
+          }`,
           "supabase"
         );
         eventCounts.SupabaseBatchesSent++;
@@ -338,16 +385,25 @@ async function batchUpsertEventsWithRetry(tableName, batchData) {
       );
       if (attempts < CONFIG.maxRetries) {
         const delay = Math.pow(2, attempts - 1) * CONFIG.retryBaseDelay;
-        log(`Retrying batch upsert to ${tableName} after exception in ${delay}ms`, "supabase");
-        await new Promise(resolve => setTimeout(resolve, delay));
+        log(
+          `Retrying batch upsert to ${tableName} after exception in ${delay}ms`,
+          "supabase"
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
         eventCounts.SupabaseErrors += batchSize;
         return { success: false, error: e };
       }
     }
   }
-  log(`Failed to upsert batch to ${tableName} after ${CONFIG.maxRetries} attempts`, "error");
-  return { success: false, error: { message: `Failed after ${CONFIG.maxRetries} attempts` } };
+  log(
+    `Failed to upsert batch to ${tableName} after ${CONFIG.maxRetries} attempts`,
+    "error"
+  );
+  return {
+    success: false,
+    error: { message: `Failed after ${CONFIG.maxRetries} attempts` },
+  };
 }
 
 // --- Test Supabase Connection Function (Now tests after setup) ---
@@ -361,7 +417,10 @@ async function testSupabaseConnection() {
       .limit(1); // Only need to know if we *can* select
 
     if (error) {
-      log(`Supabase client connection/permission test failed: ${error.message}`, "error");
+      log(
+        `Supabase client connection/permission test failed: ${error.message}`,
+        "error"
+      );
       log(`Supabase error details: ${JSON.stringify(error)}`, "error");
       // If RLS is misconfigured or service key is wrong, this might fail.
       return false;
@@ -379,7 +438,8 @@ const server = http.createServer((req, res) => {
   const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
   const uptime = ((performance.now() - startTime) / 1000).toFixed(0);
   const eventsPerSecond = uptime > 0 ? (totalEvents / uptime).toFixed(2) : 0;
-  const dbOpsPerSecond = uptime > 0 ? (eventCounts.SupabaseEventsUpserted / uptime).toFixed(2) : 0;
+  const dbOpsPerSecond =
+    uptime > 0 ? (eventCounts.SupabaseEventsUpserted / uptime).toFixed(2) : 0;
 
   // --- Your existing HTML template ---
   const html = `
@@ -389,48 +449,396 @@ const server = http.createServer((req, res) => {
   <title>Last Tap Tracker Dashboard</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style> /* Your CSS */ </style>
+  <style>
+    :root {
+      --primary: #4F46E5;
+      --primary-light: #818CF8;
+      --primary-dark: #3730A3;
+      --success: #10B981;
+      --warning: #F59E0B;
+      --danger: #EF4444;
+      --dark: #1F2937;
+      --light: #F9FAFB;
+      --gray: #9CA3AF;
+      --gray-light: #E5E7EB;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      line-height: 1.6;
+      color: var(--dark);
+      background-color: #F3F4F6;
+      padding: 0;
+      margin: 0;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+
+    .header {
+      background-color: var(--primary);
+      color: white;
+      padding: 1.5rem 0;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      margin-bottom: 2rem;
+    }
+
+    .header h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin: 0;
+      text-align: center;
+    }
+
+    .header p {
+      opacity: 0.8;
+      margin-top: 0.5rem;
+      text-align: center;
+    }
+
+    .card {
+      background: white;
+      border-radius: 0.75rem;
+      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--gray-light);
+    }
+
+    .card-header h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--primary-dark);
+      margin: 0;
+    }
+
+    .card-header .icon {
+      margin-right: 0.75rem;
+      color: var(--primary);
+      font-size: 1.25rem;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); /* Responsive grid */
+      gap: 1.5rem;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column; /* Stack label and value */
+      margin-bottom: 1rem;
+    }
+
+    .stat-label {
+      font-weight: 500;
+      color: var(--gray);
+      font-size: 0.875rem; /* Smaller label */
+      margin-bottom: 0.25rem;
+    }
+
+    .stat-value {
+      color: var(--primary-dark);
+      font-weight: 600;
+      word-break: break-all; /* Prevent long addresses from breaking layout */
+    }
+
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .status-running {
+      background-color: rgba(16, 185, 129, 0.1);
+      color: var(--success);
+    }
+
+    .address {
+      font-family: monospace;
+      font-size: 0.9em;
+      background-color: rgba(79, 70, 229, 0.1);
+      padding: 0.1rem 0.3rem;
+      border-radius: 0.25rem;
+      color: var(--primary-dark);
+    }
+
+    .network-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      background-color: var(--primary-light);
+      color: white;
+      margin-left: 0.75rem;
+    }
+
+    .info-section {
+      display: grid; /* Use grid for info boxes */
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); /* Responsive */
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .info-box {
+      padding: 1rem;
+      background-color: #F9FAFB;
+      border-radius: 0.5rem;
+      border-left: 4px solid var(--primary);
+    }
+
+     .info-box.error { /* Style for error box */
+        border-left-color: var(--danger);
+     }
+     .info-box.error h3 {
+        color: var(--danger);
+     }
+      .info-box.error p {
+        color: var(--danger);
+        font-weight: 700;
+      }
+       .info-box.success p {
+        color: var(--success);
+         font-weight: 700;
+      }
+
+
+    .info-box h3 {
+      font-size: 0.875rem;
+      color: var(--gray);
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .info-box p {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--primary-dark);
+    }
+
+    .refresh-notice {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.875rem;
+      color: var(--gray);
+      margin-top: 1rem;
+    }
+
+    .pulse {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--success);
+      margin-right: 0.5rem;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+      }
+      70% {
+        box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+      }
+      100% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+      }
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 2rem;
+      padding: 1rem 0;
+      color: var(--gray);
+      font-size: 0.875rem;
+    }
+  </style>
 </head>
 <body>
-  <header class="header"> /* ... */ </header>
+  <header class="header">
+    <div class="container">
+      <h1>Last Tap Game Event Tracker</h1>
+      <p>Real-time monitoring dashboard (Batch Upsert Version)</p>
+    </div>
+  </header>
+
   <div class="container">
-     <div class="card">
-        <div class="card-header"><h2>System Status <span class="network-badge">${CONFIG.network}</span></h2></div>
-        <div class="info-section">
-             <div class="info-box"><h3>Status</h3><p><span class="status-indicator status-running">Running</span></p></div>
-             <div class="info-box"><h3>Uptime</h3><p>${uptime} s</p></div>
-             <div class="info-box"><h3>Current Block</h3><p>${currentBlock}</p></div>
-             <div class="info-box"><h3>Events/Sec</h3><p>${eventsPerSecond}</p></div>
-             <div class="info-box"><h3>DB Ops/Sec</h3><p>${dbOpsPerSecond}</p></div>
+    <div class="card">
+      <div class="card-header">
+        <h2>System Status <span class="network-badge">${
+          CONFIG.network
+        }</span></h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+
+      <div class="info-section">
+        <div class="info-box">
+          <h3>Status</h3>
+          <p><span class="status-indicator status-running">Running</span></p>
         </div>
-        <div class="card-header"><h2>Game State</h2></div>
-        <div class="status-grid">
-             <div class="stat-item"><div class="stat-label">Current Round:</div><div class="stat-value">${currentRound || "Unknown"}</div></div>
-             <div class="stat-item"><div class="stat-label">Last Tapper:</div><div class="stat-value">${lastTapper ? `<span class="address">${formatAddress(lastTapper)}</span>` : "Unknown"}</div></div>
-             <div class="stat-item"><div class="stat-label">Current Tap Cost:</div><div class="stat-value">${formatEth(tapCost) || "Unknown"}</div></div>
-             <div class="stat-item"><div class="stat-label">Last Winner:</div><div class="stat-value">${lastWinner ? `<span class="address">${formatAddress(lastWinner)}</span>` : "Unknown"}</div></div>
-             <div class="stat-item"><div class="stat-label">Last Prize:</div><div class="stat-value">${formatEth(lastPrize) || "Unknown"}</div></div>
-             <div class="stat-item"><div class="stat-label">Contract Address:</div><div class="stat-value"><span class="address">${formatAddress(CONFIG.contractAddress)}</span></div></div>
+        <div class="info-box">
+          <h3>Uptime</h3>
+          <p>${uptime} s</p>
         </div>
-     </div>
-     <div class="card events-card">
-         <div class="card-header"><h2>Event & Database Statistics</h2></div>
-         <div class="info-section">
-             <div class="info-box"><h3>Total Events Processed</h3><p>${eventCounts.Tapped + eventCounts.RoundEnded}</p></div>
-             <div class="info-box"><h3>Taps</h3><p>${eventCounts.Tapped}</p></div>
-             <div class="info-box"><h3>Round Ends</h3><p>${eventCounts.RoundEnded}</p></div>
-             <div class="info-box"><h3>DB Batches Sent</h3><p>${eventCounts.SupabaseBatchesSent}</p></div>
-             <div class="info-box"><h3>DB Events Upserted</h3><p>${eventCounts.SupabaseEventsUpserted}</p></div>
-             <div class="info-box ${eventCounts.SupabaseErrors > 0 ? 'error' : 'success'}"><h3>DB Errors</h3><p>${eventCounts.SupabaseErrors}</p></div>
-         </div>
-     </div>
-    <div class="refresh-notice"><span class="pulse"></span> Auto-refreshes on page reload</div>
+        <div class="info-box">
+          <h3>Current Block</h3>
+          <p>${currentBlock}</p>
+        </div>
+         <div class="info-box">
+          <h3>Events/Sec</h3>
+          <p>${eventsPerSecond}</p>
+        </div>
+         <div class="info-box">
+          <h3>DB Ops/Sec</h3>
+          <p>${dbOpsPerSecond}</p>
+        </div>
+      </div>
+
+      <div class="card-header">
+        <h2>Game State</h2>
+      </div>
+
+      <div class="status-grid">
+        <div class="stat-item">
+          <div class="stat-label">Current Round:</div>
+          <div class="stat-value">${currentRound || "Unknown"}</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Last Tapper:</div>
+          <div class="stat-value">
+            ${
+              lastTapper
+                ? `<span class="address">${formatAddress(lastTapper)}</span>`
+                : "Unknown"
+            }
+          </div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Current Tap Cost:</div>
+          <div class="stat-value">${formatEth(tapCost) || "Unknown"}</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Last Winner:</div>
+          <div class="stat-value">
+            ${
+              lastWinner
+                ? `<span class="address">${formatAddress(lastWinner)}</span>`
+                : "Unknown"
+            }
+          </div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Last Prize:</div>
+          <div class="stat-value">${formatEth(lastPrize) || "Unknown"}</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Contract Address:</div>
+          <div class="stat-value">
+            <span class="address">${formatAddress(
+              CONFIG.contractAddress
+            )}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card events-card">
+      <div class="card-header">
+        <h2>Event & Database Statistics</h2>
+      </div>
+
+      <div class="info-section">
+        <div class="info-box">
+          <h3>Total Events Processed</h3>
+          <p>${eventCounts.Tapped + eventCounts.RoundEnded}</p>
+        </div>
+        <div class="info-box">
+          <h3>Taps</h3>
+          <p>${eventCounts.Tapped}</p>
+        </div>
+        <div class="info-box">
+          <h3>Round Ends</h3>
+          <p>${eventCounts.RoundEnded}</p>
+        </div>
+        <div class="info-box">
+          <h3>DB Batches Sent</h3>
+           <p>${eventCounts.SupabaseBatchesSent}</p>
+        </div>
+        <div class="info-box">
+          <h3>DB Events Upserted</h3>
+          <p>${eventCounts.SupabaseEventsUpserted}</p>
+        </div>
+        <div class="info-box ${
+          eventCounts.SupabaseErrors > 0 ? "error" : "success"
+        }">
+          <h3>DB Errors</h3>
+          <p>${eventCounts.SupabaseErrors}</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="refresh-notice">
+      <span class="pulse"></span> Auto-refreshes on page reload
+    </div>
   </div>
-  <footer class="footer"> /* ... */ </footer>
-  <script> /* Your JS */ </script>
+
+  <footer class="footer">
+    <div class="container">
+      <p>Last Tap Tracker • Running Headless • <span id="current-time"></span></p>
+    </div>
+  </footer>
+
+  <script>
+    function updateTime() {
+      const timeElement = document.getElementById('current-time');
+      if (timeElement) {
+        timeElement.textContent = new Date().toLocaleString();
+      }
+    }
+    updateTime();
+    setInterval(updateTime, 1000);
+  </script>
 </body>
-</html>`;
-  // --- End HTML ---
+</html>
+  `; // --- End HTML ---
 
   res.writeHead(200, { "Content-Type": "text/html" });
   res.end(html);
@@ -439,7 +847,6 @@ const server = http.createServer((req, res) => {
 server.listen(8080, "0.0.0.0", () => {
   log("Status web server running on port 8080", "startup");
 });
-
 
 // --- Main Function ---
 async function main() {
@@ -453,7 +860,10 @@ async function main() {
   // Test Supabase client connection/permissions AFTER setup
   const connectionOk = await testSupabaseConnection();
   if (!connectionOk) {
-    log("CRITICAL: Supabase client connection test failed after setup. Check service key permissions or RLS policies. Exiting.", "error");
+    log(
+      "CRITICAL: Supabase client connection test failed after setup. Check service key permissions or RLS policies. Exiting.",
+      "error"
+    );
     process.exit(1); // Exit if client can't interact with tables
   }
 
@@ -477,7 +887,14 @@ async function main() {
       fromBlock: currentBlock,
       logs: [{ address: [CONFIG.contractAddress], topics: [topic0_list] }],
       fieldSelection: {
-        log: [ LogField.BlockNumber, LogField.TransactionHash, LogField.LogIndex, LogField.Data, LogField.Topic0, LogField.Topic1 ],
+        log: [
+          LogField.BlockNumber,
+          LogField.TransactionHash,
+          LogField.LogIndex,
+          LogField.Data,
+          LogField.Topic0,
+          LogField.Topic1,
+        ],
       },
       joinMode: JoinMode.JoinNothing,
     };
@@ -490,100 +907,248 @@ async function main() {
 
     // --- Main Event Loop (Largely Unchanged) ---
     while (true) {
-        const res = await stream.recv();
+      const res = await stream.recv();
 
-        if (res === null) {
-            // Reached chain tip logic (unchanged)
-            const now = Date.now();
-            consecutiveChainTips++;
-            if (now - lastTipReachedTime > chainTipReportInterval || consecutiveChainTips === 1) {
-                log(`Reached chain tip at block ${currentBlock}. Waiting...`, "verbose");
-                lastTipReachedTime = now;
-            }
-            await new Promise((resolve) => setTimeout(resolve, POLLING_INTERVAL));
-             try { // Optional height check (unchanged)
-                const newHeight = await hypersyncClient.getHeight();
-                if (newHeight > height) {
-                    log(`Chain advanced to ${newHeight}. Re-querying...`, "verbose");
-                    await stream.close(); height = newHeight; query.fromBlock = currentBlock;
-                    stream = await hypersyncClient.stream(query, {}); consecutiveChainTips = 0;
-                }
-            } catch (err) { log(`Error checking height at tip: ${err.message}`, "error"); }
+      if (res === null) {
+        // Reached chain tip logic (unchanged)
+        const now = Date.now();
+        consecutiveChainTips++;
+        if (
+          now - lastTipReachedTime > chainTipReportInterval ||
+          consecutiveChainTips === 1
+        ) {
+          log(
+            `Reached chain tip at block ${currentBlock}. Waiting...`,
+            "verbose"
+          );
+          lastTipReachedTime = now;
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLLING_INTERVAL));
+        try {
+          // Optional height check (unchanged)
+          const newHeight = await hypersyncClient.getHeight();
+          if (newHeight > height) {
+            log(`Chain advanced to ${newHeight}. Re-querying...`, "verbose");
+            await stream.close();
+            height = newHeight;
+            query.fromBlock = currentBlock;
+            stream = await hypersyncClient.stream(query, {});
+            consecutiveChainTips = 0;
+          }
+        } catch (err) {
+          log(`Error checking height at tip: ${err.message}`, "error");
+        }
+        continue;
+      }
+
+      consecutiveChainTips = 0;
+      lastTipReachedTime = 0;
+      let tappedBatch = [];
+      let roundEndedBatch = [];
+
+      if (res.data && res.data.logs && res.data.logs.length > 0) {
+        const decodedLogs = await decoder.decodeLogs(res.data.logs);
+
+        for (let i = 0; i < decodedLogs.length; i++) {
+          const decodedLog = decodedLogs[i];
+          const rawLog = res.data.logs[i];
+          if (decodedLog === null) {
+            log(
+              `Skipping undecodable log idx ${i}, blk ${rawLog.blockNumber}`,
+              "verbose"
+            );
             continue;
-        }
+          }
 
-        consecutiveChainTips = 0; lastTipReachedTime = 0;
-        let tappedBatch = []; let roundEndedBatch = [];
+          const blockNumber = rawLog.blockNumber;
+          const transactionHash = rawLog.transactionHash;
+          const logIndex = rawLog.logIndex;
+          if (
+            transactionHash === undefined ||
+            logIndex === undefined ||
+            blockNumber === undefined
+          ) {
+            log(
+              `Missing critical fields in log idx ${i}, blk ${
+                rawLog.blockNumber
+              }. Skipping. Raw: ${JSON.stringify(rawLog)}`,
+              "error"
+            );
+            continue;
+          }
 
-        if (res.data && res.data.logs && res.data.logs.length > 0) {
-            const decodedLogs = await decoder.decodeLogs(res.data.logs);
+          const topic0 = rawLog.topics[0];
+          const eventType = topic0 === TAPPED_TOPIC ? "Tapped" : "RoundEnded";
 
-            for (let i = 0; i < decodedLogs.length; i++) {
-                const decodedLog = decodedLogs[i]; const rawLog = res.data.logs[i];
-                if (decodedLog === null) { log(`Skipping undecodable log idx ${i}, blk ${rawLog.blockNumber}`, "verbose"); continue; }
+          try {
+            if (eventType === "Tapped") {
+              eventCounts.Tapped++;
+              const tapper = decodedLog.indexed[0]?.val?.toString();
+              const roundNumber = decodedLog.body[0]?.val?.toString();
+              const tapCostPaid = decodedLog.body[1]?.val?.toString();
+              const timestampSeconds = decodedLog.body[2]?.val?.toString();
+              if (
+                !tapper ||
+                !roundNumber ||
+                !tapCostPaid ||
+                !timestampSeconds
+              ) {
+                log(
+                  `Missing data in Tapped event: Tx ${formatAddress(
+                    transactionHash
+                  )}, Log ${logIndex}. Skipping.`,
+                  "error"
+                );
+                continue;
+              }
 
-                const blockNumber = rawLog.blockNumber; const transactionHash = rawLog.transactionHash; const logIndex = rawLog.logIndex;
-                if (transactionHash === undefined || logIndex === undefined || blockNumber === undefined) {
-                    log(`Missing critical fields in log idx ${i}, blk ${rawLog.blockNumber}. Skipping. Raw: ${JSON.stringify(rawLog)}`, "error"); continue;
-                }
+              const eventTimestamp = new Date(Number(timestampSeconds) * 1000);
+              currentRound = roundNumber;
+              lastTapper = tapper;
+              tapCost = tapCostPaid;
+              log(
+                `TAPPED | Blk: ${blockNumber} | Rnd: ${roundNumber} | Tapper: ${formatAddress(
+                  tapper
+                )} | Cost: ${formatEth(
+                  tapCostPaid
+                )} | ${eventTimestamp.toISOString()}`,
+                "event"
+              );
 
-                const topic0 = rawLog.topics[0]; const eventType = topic0 === TAPPED_TOPIC ? "Tapped" : "RoundEnded";
+              tappedBatch.push({
+                block_number: Number(blockNumber),
+                transaction_hash: String(transactionHash),
+                log_index: Number(logIndex),
+                tapper_address: String(tapper),
+                round_number: String(roundNumber),
+                tap_cost_paid: String(tapCostPaid),
+                event_timestamp: eventTimestamp.toISOString(),
+              });
+            } else if (eventType === "RoundEnded") {
+              eventCounts.RoundEnded++;
+              const winner = decodedLog.indexed[0]?.val?.toString();
+              const prizeAmount = decodedLog.body[0]?.val?.toString();
+              const roundNumber = decodedLog.body[1]?.val?.toString();
+              const timestampSeconds = decodedLog.body[2]?.val?.toString();
+              if (
+                !winner ||
+                !prizeAmount ||
+                !roundNumber ||
+                !timestampSeconds
+              ) {
+                log(
+                  `Missing data in RoundEnded event: Tx ${formatAddress(
+                    transactionHash
+                  )}, Log ${logIndex}. Skipping.`,
+                  "error"
+                );
+                continue;
+              }
 
-                try {
-                    if (eventType === "Tapped") {
-                        eventCounts.Tapped++;
-                        const tapper = decodedLog.indexed[0]?.val?.toString(); const roundNumber = decodedLog.body[0]?.val?.toString();
-                        const tapCostPaid = decodedLog.body[1]?.val?.toString(); const timestampSeconds = decodedLog.body[2]?.val?.toString();
-                        if (!tapper || !roundNumber || !tapCostPaid || !timestampSeconds) { log(`Missing data in Tapped event: Tx ${formatAddress(transactionHash)}, Log ${logIndex}. Skipping.`, "error"); continue; }
+              const eventTimestamp = new Date(Number(timestampSeconds) * 1000);
+              lastWinner = winner;
+              lastPrize = prizeAmount;
+              currentRound = (BigInt(roundNumber) + 1n).toString();
+              log(
+                `ROUND END | Blk: ${blockNumber} | Rnd: ${roundNumber} | Winner: ${formatAddress(
+                  winner
+                )} | Prize: ${formatEth(
+                  prizeAmount
+                )} | ${eventTimestamp.toISOString()}`,
+                "event"
+              );
 
-                        const eventTimestamp = new Date(Number(timestampSeconds) * 1000);
-                        currentRound = roundNumber; lastTapper = tapper; tapCost = tapCostPaid;
-                        log(`TAPPED | Blk: ${blockNumber} | Rnd: ${roundNumber} | Tapper: ${formatAddress(tapper)} | Cost: ${formatEth(tapCostPaid)} | ${eventTimestamp.toISOString()}`, "event");
-
-                        tappedBatch.push({ block_number: Number(blockNumber), transaction_hash: String(transactionHash), log_index: Number(logIndex), tapper_address: String(tapper), round_number: String(roundNumber), tap_cost_paid: String(tapCostPaid), event_timestamp: eventTimestamp.toISOString() });
-                    } else if (eventType === "RoundEnded") {
-                         eventCounts.RoundEnded++;
-                         const winner = decodedLog.indexed[0]?.val?.toString(); const prizeAmount = decodedLog.body[0]?.val?.toString();
-                         const roundNumber = decodedLog.body[1]?.val?.toString(); const timestampSeconds = decodedLog.body[2]?.val?.toString();
-                         if (!winner || !prizeAmount || !roundNumber || !timestampSeconds) { log(`Missing data in RoundEnded event: Tx ${formatAddress(transactionHash)}, Log ${logIndex}. Skipping.`, "error"); continue; }
-
-                         const eventTimestamp = new Date(Number(timestampSeconds) * 1000);
-                         lastWinner = winner; lastPrize = prizeAmount; currentRound = (BigInt(roundNumber) + 1n).toString();
-                         log(`ROUND END | Blk: ${blockNumber} | Rnd: ${roundNumber} | Winner: ${formatAddress(winner)} | Prize: ${formatEth(prizeAmount)} | ${eventTimestamp.toISOString()}`, "event");
-
-                         roundEndedBatch.push({ block_number: Number(blockNumber), transaction_hash: String(transactionHash), log_index: Number(logIndex), winner_address: String(winner), prize_amount: String(prizeAmount), round_number: String(roundNumber), event_timestamp: eventTimestamp.toISOString() });
-                    }
-                } catch (processingError) { log(`Error processing log: ${processingError.message}. Tx: ${formatAddress(transactionHash)}, Log: ${logIndex}. Skipping. Stack: ${processingError.stack}`, "error"); }
-            } // End log loop
-
-            // --- Send Batches (Unchanged) ---
-            const batchPromises = [];
-            if (tappedBatch.length > 0) batchPromises.push(batchUpsertEventsWithRetry("tapped_events", tappedBatch));
-            if (roundEndedBatch.length > 0) batchPromises.push(batchUpsertEventsWithRetry("round_ended_events", roundEndedBatch));
-            if (batchPromises.length > 0) {
-                const results = await Promise.all(batchPromises);
-                results.forEach(result => { if (!result.success) log(`Failed final upsert batch. Error: ${JSON.stringify(result.error)}`, "error"); });
+              roundEndedBatch.push({
+                block_number: Number(blockNumber),
+                transaction_hash: String(transactionHash),
+                log_index: Number(logIndex),
+                winner_address: String(winner),
+                prize_amount: String(prizeAmount),
+                round_number: String(roundNumber),
+                event_timestamp: eventTimestamp.toISOString(),
+              });
             }
-        } // End if(res.data...)
+          } catch (processingError) {
+            log(
+              `Error processing log: ${
+                processingError.message
+              }. Tx: ${formatAddress(
+                transactionHash
+              )}, Log: ${logIndex}. Skipping. Stack: ${processingError.stack}`,
+              "error"
+            );
+          }
+        } // End log loop
 
-        // Update block position (unchanged)
-        if (res.nextBlock) {
-            const previousBlock = currentBlock; currentBlock = res.nextBlock; query.fromBlock = currentBlock;
-            if (currentBlock - lastProgressLogBlock >= 10000) { // Progress log (unchanged)
-                const seconds = (performance.now() - runStartTime) / 1000; const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
-                log(`Progress: Block ${currentBlock} | ${totalEvents} events | ${eventCounts.SupabaseEventsUpserted} DB upserts | ${eventCounts.SupabaseErrors} DB errors | ${seconds.toFixed(1)}s`, "normal");
-                lastProgressLogBlock = currentBlock;
-            }
-        } else if (res.data && res.data.logs && res.data.logs.length > 0) { // Block update at tip (unchanged)
-            const lastLogBlock = res.data.logs[res.data.logs.length - 1]?.blockNumber;
-            if (lastLogBlock && lastLogBlock >= currentBlock) { currentBlock = lastLogBlock + 1; query.fromBlock = currentBlock; log(`Advanced currentBlock to ${currentBlock} based on last log at tip`, "verbose"); }
+        // --- Send Batches (Unchanged) ---
+        const batchPromises = [];
+        if (tappedBatch.length > 0)
+          batchPromises.push(
+            batchUpsertEventsWithRetry("tapped_events", tappedBatch)
+          );
+        if (roundEndedBatch.length > 0)
+          batchPromises.push(
+            batchUpsertEventsWithRetry("round_ended_events", roundEndedBatch)
+          );
+        if (batchPromises.length > 0) {
+          const results = await Promise.all(batchPromises);
+          results.forEach((result) => {
+            if (!result.success)
+              log(
+                `Failed final upsert batch. Error: ${JSON.stringify(
+                  result.error
+                )}`,
+                "error"
+              );
+          });
         }
+      } // End if(res.data...)
+
+      // Update block position (unchanged)
+      if (res.nextBlock) {
+        const previousBlock = currentBlock;
+        currentBlock = res.nextBlock;
+        query.fromBlock = currentBlock;
+        if (currentBlock - lastProgressLogBlock >= 10000) {
+          // Progress log (unchanged)
+          const seconds = (performance.now() - runStartTime) / 1000;
+          const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
+          log(
+            `Progress: Block ${currentBlock} | ${totalEvents} events | ${
+              eventCounts.SupabaseEventsUpserted
+            } DB upserts | ${
+              eventCounts.SupabaseErrors
+            } DB errors | ${seconds.toFixed(1)}s`,
+            "normal"
+          );
+          lastProgressLogBlock = currentBlock;
+        }
+      } else if (res.data && res.data.logs && res.data.logs.length > 0) {
+        // Block update at tip (unchanged)
+        const lastLogBlock =
+          res.data.logs[res.data.logs.length - 1]?.blockNumber;
+        if (lastLogBlock && lastLogBlock >= currentBlock) {
+          currentBlock = lastLogBlock + 1;
+          query.fromBlock = currentBlock;
+          log(
+            `Advanced currentBlock to ${currentBlock} based on last log at tip`,
+            "verbose"
+          );
+        }
+      }
     } // End while(true) loop
-
-  } catch (error) { // Fatal error handling (unchanged)
+  } catch (error) {
+    // Fatal error handling (unchanged)
     log(`Fatal error in main loop: ${error.message}`, "error");
     log(`Stack Trace: ${error.stack}`, "error");
-    if (stream) { try { await stream.close(); log("Hypersync stream closed.", "normal"); } catch (closeE) { log(`Error closing stream: ${closeE.message}`, "error"); } }
+    if (stream) {
+      try {
+        await stream.close();
+        log("Hypersync stream closed.", "normal");
+      } catch (closeE) {
+        log(`Error closing stream: ${closeE.message}`, "error");
+      }
+    }
     process.exit(1);
   }
 }
