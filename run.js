@@ -14,7 +14,7 @@ import "dotenv/config"; // Import dotenv to load environment variables
 
 // --- Configuration ---
 const CONFIG = {
-  contractAddress: "0x16ED00aC93b37B7481eD3CCfa2a87C342aCB816C",
+  contractAddress: process.env.GAME_CONTRACT_ADDRESS,
   startBlock: 3258331,
   network: "megaethTestnet",
   logLevel: "event-only", // 'verbose', 'normal', 'event-only'
