@@ -124,6 +124,7 @@ const NETWORK_URLS = {
 // --- Initialize Clients ---
 const hypersyncClient = HypersyncClient.new({
   url: NETWORK_URLS[CONFIG.network],
+  bearerToken: process.env.HYPERSYNC_BEARER_TOKEN,
   timeout: 30000,
 });
 
