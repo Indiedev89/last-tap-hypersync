@@ -14,8 +14,8 @@ import figlet from "figlet";
 // CONFIGURATION
 //=============================================================================
 const CONFIG = {
-  contractAddress: "0x16ED00aC93b37B7481eD3CCfa2a87C342aCB816C",
-  startBlock: 3258331,
+  contractAddress: "0x7C1520933aAE10409c0FA9a5efAb2ACA2d64B04E",
+  startBlock: 5507082,
   network: "megaethTestnet",
 };
 
