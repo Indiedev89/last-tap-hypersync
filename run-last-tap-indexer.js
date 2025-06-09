@@ -14,7 +14,7 @@ import figlet from "figlet";
 // CONFIGURATION
 //=============================================================================
 const CONFIG = {
-  contractAddress: "0x7C1520933aAE10409c0FA9a5efAb2ACA2d64B04E",
+  contractAddress: "0x20382A8962d3C5e1CD3D117b8ecB2c6A8694E8DA",
   startBlock: 5507082,
   network: "megaethTestnet",
 };
@@ -30,12 +30,13 @@ const NETWORK_URLS = {
 // Initialize client
 const client = HypersyncClient.new({
   url: NETWORK_URLS[CONFIG.network],
+  bearerToken: process.env.HYPERSYNC_BEARER_TOKEN,
   timeout: 30000,
 });
 
-// Define event signatures and hashes
-const TAPPED_TOPIC = keccak256(toHex("Tapped(address,uint256,uint256,uint256)"));
-const ROUND_ENDED_TOPIC = keccak256(toHex("RoundEnded(address,uint256,uint256,uint256)"));
+// Define event signatures and hashes - FIXED to match actual events
+const TAPPED_TOPIC = keccak256(toHex("Tapped(uint256,address,uint256,uint256,uint256)"));
+const ROUND_ENDED_TOPIC = keccak256(toHex("RoundEnded(uint256,address,uint256,uint256)"));
 const topic0_list = [TAPPED_TOPIC, ROUND_ENDED_TOPIC];
 
 // Create mapping from topic0 hash to event name
@@ -80,7 +81,7 @@ const screen = blessed.screen({
 });
 
 // Define UI color scheme
-const uiColor = "#04b00f"; // Red theme for Last Tap
+const uiColor = "#04b00f"; // Green theme for Last Tap
 
 // Create a grid layout
 const grid = new contrib.grid({
@@ -227,11 +228,12 @@ const updateEventDistribution = (eventCounts) => {
 };
 
 // Update round info display
-const updateRoundInfo = (currentRound, lastTapper, tapCost, lastWinner, prizeAmount) => {
+const updateRoundInfo = (currentRound, lastTapper, tapCost, lastWinner, prizeAmount, newEndTime) => {
   roundInfo.setContent(
     `${chalk.hex(uiColor)("Current Round:".padEnd(16))} ${chalk.white(currentRound || "N/A")}\n` +
     `${chalk.hex(uiColor)("Last Tapper:".padEnd(16))} ${chalk.green(formatAddress(lastTapper) || "N/A")}\n` +
     `${chalk.hex(uiColor)("Current Tap Cost:".padEnd(16))} ${chalk.cyan(formatEth(tapCost) || "N/A")}\n` +
+    `${chalk.hex(uiColor)("Current End Time:".padEnd(16))} ${chalk.cyan(newEndTime ? new Date(Number(newEndTime) * 1000).toLocaleString() : "N/A")}\n` +
     `${chalk.hex(uiColor)("Last Winner:".padEnd(16))} ${chalk.yellow(formatAddress(lastWinner) || "N/A")}\n` +
     `${chalk.hex(uiColor)("Last Prize:".padEnd(16))} ${chalk.magenta(formatEth(prizeAmount) || "N/A")}`
   );
@@ -274,6 +276,7 @@ async function main() {
   let tapCost = null;
   let lastWinner = null;
   let lastPrize = null;
+  let newEndTime = null;
 
   // Performance tracking
   const startTime = performance.now();
@@ -287,19 +290,19 @@ async function main() {
     const height = await client.getHeight();
     logWindow.log(`Chain height: ${formatNumber(height)}`);
 
-    // Create decoder
+    // Create decoder - FIXED signatures to match actual events
     const decoder = Decoder.fromSignatures([
-      "Tapped(address indexed tapper, uint256 roundNumber, uint256 tapCostPaid, uint256 timestamp)",
-      "RoundEnded(address indexed winner, uint256 prizeAmount, uint256 roundNumber, uint256 timestamp)",
+      "Tapped(uint256 indexed roundNumber,address indexed player,uint256 cost,uint256 newEndTime,uint256 timestamp)",
+      "RoundEnded(uint256 indexed roundNumber,address indexed winner,uint256 prize,uint256 timestamp)",
     ]);
 
     // Initialize UI components
     updateProgressBar(0, `Block: ${formatNumber(CONFIG.startBlock)}/${formatNumber(height)}`);
     updateEventDistribution(eventCounts);
-    updateRoundInfo(currentRound, lastTapper, tapCost, lastWinner, lastPrize);
+    updateRoundInfo(currentRound, lastTapper, tapCost, lastWinner, lastPrize, newEndTime);
     updateStats(CONFIG.startBlock, height, eventCounts, startTime);
 
-    // Set up query
+    // Set up query - FIXED to include all necessary topic fields
     let query = {
       fromBlock: CONFIG.startBlock,
       logs: [
@@ -314,7 +317,9 @@ async function main() {
           LogField.TransactionHash,
           LogField.Data,
           LogField.Topic0,
-          LogField.Topic1,
+          LogField.Topic1,  // roundNumber (indexed)
+          LogField.Topic2,  // player/winner (indexed)
+          LogField.Topic3   // Extra topic if needed
         ],
       },
       joinMode: JoinMode.JoinNothing,
@@ -372,11 +377,15 @@ async function main() {
           if (eventType === "Tapped") {
             eventCounts.Tapped++;
 
-            // Extract data
-            const tapper = decodedLog.indexed[0]?.val.toString();
-            const roundNumber = decodedLog.body[0]?.val.toString();
-            const tapCostPaid = decodedLog.body[1]?.val.toString();
-            const timestamp = decodedLog.body[2]?.val.toString();
+            // FIXED: Extract data correctly based on event structure
+            // Indexed parameters: roundNumber (topic1), player (topic2)
+            // Non-indexed parameters in body: cost, newEndTime, timestamp
+            const roundNumber = decodedLog.indexed[0]?.val?.toString();
+            const tapper = decodedLog.indexed[1]?.val?.toString();
+            const tapCostPaid = decodedLog.body[0]?.val?.toString();
+            const endTime = decodedLog.body[1]?.val?.toString();
+            const timestamp = decodedLog.body[2]?.val?.toString();
+
             const date = new Date(Number(timestamp) * 1000).toISOString();
             const timeString = date.split("T")[1].split(".")[0];
 
@@ -384,6 +393,7 @@ async function main() {
             currentRound = roundNumber;
             lastTapper = tapper;
             tapCost = tapCostPaid;
+            newEndTime = endTime;
 
             // Log the event
             logWindow.log(
@@ -395,11 +405,14 @@ async function main() {
           else if (eventType === "RoundEnded") {
             eventCounts.RoundEnded++;
 
-            // Extract data
-            const winner = decodedLog.indexed[0]?.val.toString();
-            const prizeAmount = decodedLog.body[0]?.val.toString();
-            const roundNumber = decodedLog.body[1]?.val.toString();
-            const timestamp = decodedLog.body[2]?.val.toString();
+            // FIXED: Extract data correctly based on event structure
+            // Indexed parameters: roundNumber (topic1), winner (topic2)
+            // Non-indexed parameters in body: prize, timestamp
+            const roundNumber = decodedLog.indexed[0]?.val?.toString();
+            const winner = decodedLog.indexed[1]?.val?.toString();
+            const prizeAmount = decodedLog.body[0]?.val?.toString();
+            const timestamp = decodedLog.body[1]?.val?.toString();
+
             const date = new Date(Number(timestamp) * 1000).toISOString();
             const timeString = date.split("T")[1].split(".")[0];
 
@@ -418,7 +431,7 @@ async function main() {
         }
 
         // Update UI components
-        updateRoundInfo(currentRound, lastTapper, tapCost, lastWinner, lastPrize);
+        updateRoundInfo(currentRound, lastTapper, tapCost, lastWinner, lastPrize, newEndTime);
         updateEventDistribution(eventCounts);
       }
 

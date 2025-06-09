@@ -5,8 +5,7 @@
   "main": "run.js",
   "scripts": {
     "dev": "node run-last-tap-indexer.js",
-    "start": "node run.js",
-    "test": "node run-2.js"
+    "start": "node run.js"
   },
   "keywords": [],
   "author": "",

@@ -226,9 +226,11 @@ CREATE TABLE IF NOT EXISTS public.tapped_events (
     block_number BIGINT NOT NULL,
     transaction_hash TEXT NOT NULL,
     log_index INTEGER NOT NULL,
-    tapper_address TEXT NOT NULL,
     round_number TEXT NOT NULL,
-    tap_cost_paid TEXT NOT NULL,
+    player TEXT NOT NULL,
+    cost TEXT NOT NULL,
+    new_end_time TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
     event_timestamp TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (transaction_hash, log_index)
 );
@@ -237,18 +239,19 @@ CREATE TABLE IF NOT EXISTS public.round_ended_events (
     block_number BIGINT NOT NULL,
     transaction_hash TEXT NOT NULL,
     log_index INTEGER NOT NULL,
-    winner_address TEXT NOT NULL,
-    prize_amount TEXT NOT NULL,
     round_number TEXT NOT NULL,
+    winner TEXT NOT NULL,
+    prize TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
     event_timestamp TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (transaction_hash, log_index)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tapped_round_number ON public.tapped_events(round_number);
-CREATE INDEX IF NOT EXISTS idx_tapped_tapper ON public.tapped_events(tapper_address);
+CREATE INDEX IF NOT EXISTS idx_tapped_player ON public.tapped_events(player);
 CREATE INDEX IF NOT EXISTS idx_tapped_timestamp ON public.tapped_events(event_timestamp);
 CREATE INDEX IF NOT EXISTS idx_round_ended_round ON public.round_ended_events(round_number);
-CREATE INDEX IF NOT EXISTS idx_round_ended_winner ON public.round_ended_events(winner_address);
+CREATE INDEX IF NOT EXISTS idx_round_ended_winner ON public.round_ended_events(winner);
 CREATE INDEX IF NOT EXISTS idx_round_ended_timestamp ON public.round_ended_events(event_timestamp);
 
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
@@ -352,8 +355,8 @@ async function testSupabaseConnection() {
 }
 
 // --- Event Signatures and Topics ---
-const TAPPED_TOPIC = keccak256(toHex("Tapped(address,uint256,uint256,uint256)"));
-const ROUND_ENDED_TOPIC = keccak256(toHex("RoundEnded(address,uint256,uint256,uint256)"));
+const TAPPED_TOPIC = keccak256(toHex("Tapped(uint256,address,uint256,uint256,uint256)"));
+const ROUND_ENDED_TOPIC = keccak256(toHex("RoundEnded(uint256,address,uint256,uint256)"));
 const topic0_list = [TAPPED_TOPIC, ROUND_ENDED_TOPIC];
 
 const POLLING_INTERVAL = 200;
@@ -421,7 +424,7 @@ async function batchUpsertEventsWithRetry(tableName, batchData) {
   return { success: false, error: { message: `Failed after ${CONFIG.maxRetries} attempts` } };
 }
 
-// --- Enhanced HTTP Server ---
+// --- Simplified JSON Status Server ---
 const server = http.createServer(async (req, res) => {
   // Health check for all RPCs
   if (req.url === '/health/rpcs') {
@@ -480,7 +483,6 @@ const server = http.createServer(async (req, res) => {
       if (!hypersyncClient || !currentRpcUrl) {
         throw new Error('No active Hypersync client');
       }
-
       const height = await hypersyncClient.getHeight();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -489,7 +491,7 @@ const server = http.createServer(async (req, res) => {
         rpc: currentRpcUrl,
         height: height,
         network: CONFIG.network
-      }));
+      }, null, 2));
     } catch (error) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -498,436 +500,43 @@ const server = http.createServer(async (req, res) => {
         rpc: currentRpcUrl || 'none',
         error: error.message,
         network: CONFIG.network
-      }));
+      }, null, 2));
     }
     return;
   }
 
-  // Dashboard
+  // Default status endpoint
   const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
-  const uptime = ((performance.now() - startTime) / 1000).toFixed(0);
-  const eventsPerSecond = uptime > 0 ? (totalEvents / uptime).toFixed(2) : 0;
-  const dbOpsPerSecond = uptime > 0 ? (eventCounts.SupabaseEventsUpserted / uptime).toFixed(2) : 0;
+  const uptimeSeconds = ((performance.now() - startTime) / 1000);
+  const eventsPerSecond = uptimeSeconds > 0 ? (totalEvents / uptimeSeconds).toFixed(2) : "0.00";
+  const dbOpsPerSecond = uptimeSeconds > 0 ? (eventCounts.SupabaseEventsUpserted / uptimeSeconds).toFixed(2) : "0.00";
 
-  const availableRpcs = NETWORK_URLS[CONFIG.network];
-  const currentRpc = currentRpcUrl || 'Not connected';
-  const rpcIndex = currentRpcIndex + 1;
-  const totalRpcs = availableRpcs ? availableRpcs.length : 0;
+  const status = {
+    status: "running",
+    uptimeSeconds: Math.floor(uptimeSeconds),
+    network: CONFIG.network,
+    contractAddress: CONFIG.contractAddress,
+    currentBlock,
+    processingRate: {
+      eventsPerSecond,
+      dbOpsPerSecond,
+    },
+    rpcStatus: {
+      currentRpc: currentRpcUrl || "Not connected",
+      availableRpcs: NETWORK_URLS[CONFIG.network],
+    },
+    gameState: {
+      currentRound,
+      lastTapper,
+      tapCost,
+      lastWinner,
+      lastPrize,
+    },
+    eventStatistics: eventCounts,
+  };
 
-  const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <title>Last Tap Tracker Dashboard</title>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    :root {
-      --primary: #4F46E5;
-      --primary-light: #818CF8;
-      --primary-dark: #3730A3;
-      --success: #10B981;
-      --warning: #F59E0B;
-      --danger: #EF4444;
-      --dark: #1F2937;
-      --light: #F9FAFB;
-      --gray: #9CA3AF;
-      --gray-light: #E5E7EB;
-    }
-
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      line-height: 1.6;
-      color: var(--dark);
-      background-color: #F3F4F6;
-      padding: 0;
-      margin: 0;
-    }
-
-    .container {
-      max-width: 1000px;
-      margin: 0 auto;
-      padding: 1rem;
-    }
-
-    .header {
-      background-color: var(--primary);
-      color: white;
-      padding: 1.5rem 0;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-      margin-bottom: 2rem;
-    }
-
-    .header h1 {
-      font-size: 1.8rem;
-      font-weight: 700;
-      margin: 0;
-      text-align: center;
-    }
-
-    .header p {
-      opacity: 0.8;
-      margin-top: 0.5rem;
-      text-align: center;
-    }
-
-    .card {
-      background: white;
-      border-radius: 0.75rem;
-      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
-    }
-
-    .card-header {
-      display: flex;
-      align-items: center;
-      margin-bottom: 1rem;
-      padding-bottom: 0.5rem;
-      border-bottom: 1px solid var(--gray-light);
-    }
-
-    .card-header h2 {
-      font-size: 1.25rem;
-      font-weight: 600;
-      color: var(--primary-dark);
-      margin: 0;
-    }
-
-    .status-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 1.5rem;
-    }
-
-    .stat-item {
-      display: flex;
-      flex-direction: column;
-      margin-bottom: 1rem;
-    }
-
-    .stat-label {
-      font-weight: 500;
-      color: var(--gray);
-      font-size: 0.875rem;
-      margin-bottom: 0.25rem;
-    }
-
-    .stat-value {
-      color: var(--primary-dark);
-      font-weight: 600;
-      word-break: break-all;
-    }
-
-    .status-indicator {
-      display: inline-flex;
-      align-items: center;
-      padding: 0.25rem 0.75rem;
-      border-radius: 9999px;
-      font-size: 0.875rem;
-      font-weight: 500;
-    }
-
-    .status-running {
-      background-color: rgba(16, 185, 129, 0.1);
-      color: var(--success);
-    }
-
-    .address {
-      font-family: monospace;
-      font-size: 0.9em;
-      background-color: rgba(79, 70, 229, 0.1);
-      padding: 0.1rem 0.3rem;
-      border-radius: 0.25rem;
-      color: var(--primary-dark);
-    }
-
-    .network-badge {
-      display: inline-block;
-      padding: 0.25rem 0.75rem;
-      border-radius: 9999px;
-      font-size: 0.75rem;
-      font-weight: 500;
-      background-color: var(--primary-light);
-      color: white;
-      margin-left: 0.75rem;
-    }
-
-    .info-section {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 1rem;
-      margin-bottom: 1rem;
-    }
-
-    .info-box {
-      padding: 1rem;
-      background-color: #F9FAFB;
-      border-radius: 0.5rem;
-      border-left: 4px solid var(--primary);
-    }
-
-    .info-box.error {
-      border-left-color: var(--danger);
-    }
-    .info-box.error h3 {
-      color: var(--danger);
-    }
-    .info-box.error p {
-      color: var(--danger);
-      font-weight: 700;
-    }
-    .info-box.success p {
-      color: var(--success);
-      font-weight: 700;
-    }
-
-    .info-box h3 {
-      font-size: 0.875rem;
-      color: var(--gray);
-      margin-bottom: 0.5rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .info-box p {
-      font-size: 1.25rem;
-      font-weight: 600;
-      color: var(--primary-dark);
-    }
-
-    .rpc-list {
-      font-size: 0.8rem;
-      line-height: 1.4;
-    }
-
-    .rpc-item {
-      margin: 2px 0;
-      padding: 2px 0;
-    }
-
-    .rpc-active {
-      font-weight: bold;
-      color: var(--success);
-    }
-
-    .rpc-inactive {
-      color: var(--gray);
-    }
-
-    .refresh-notice {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.875rem;
-      color: var(--gray);
-      margin-top: 1rem;
-    }
-
-    .pulse {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background-color: var(--success);
-      margin-right: 0.5rem;
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0% {
-        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
-      }
-      70% {
-        box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
-      }
-      100% {
-        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-      }
-    }
-
-    .footer {
-      text-align: center;
-      margin-top: 2rem;
-      padding: 1rem 0;
-      color: var(--gray);
-      font-size: 0.875rem;
-    }
-  </style>
-</head>
-<body>
-  <header class="header">
-    <div class="container">
-      <h1>Last Tap Game Event Tracker</h1>
-      <p>Real-time monitoring dashboard with Dual RPC Fallback</p>
-    </div>
-  </header>
-
-  <div class="container">
-    <div class="card">
-      <div class="card-header">
-        <h2>System Status <span class="network-badge">${CONFIG.network}</span></h2>
-      </div>
-
-      <div class="info-section">
-        <div class="info-box">
-          <h3>Status</h3>
-          <p><span class="status-indicator status-running">Running</span></p>
-        </div>
-        <div class="info-box">
-          <h3>Uptime</h3>
-          <p>${uptime} s</p>
-        </div>
-        <div class="info-box">
-          <h3>Current Block</h3>
-          <p>${currentBlock}</p>
-        </div>
-        <div class="info-box">
-          <h3>Events/Sec</h3>
-          <p>${eventsPerSecond}</p>
-        </div>
-        <div class="info-box">
-          <h3>DB Ops/Sec</h3>
-          <p>${dbOpsPerSecond}</p>
-        </div>
-        <div class="info-box">
-          <h3>Active RPC</h3>
-          <p style="font-size: 0.9rem; word-break: break-all;">${currentRpc}</p>
-        </div>
-        <div class="info-box">
-          <h3>RPC Status</h3>
-          <p>${rpcIndex}/${totalRpcs} Available</p>
-        </div>
-      </div>
-
-      <div class="card-header">
-        <h2>RPC Endpoints</h2>
-      </div>
-
-      <div class="status-grid">
-        <div class="stat-item">
-          <div class="stat-label">Available RPCs:</div>
-          <div class="stat-value rpc-list">
-            ${availableRpcs ? availableRpcs.map((rpc, index) =>
-              `<div class="rpc-item ${index === currentRpcIndex ? 'rpc-active' : 'rpc-inactive'}">${index === currentRpcIndex ? '● ' : '○ '}${rpc}</div>`
-            ).join('') : 'None configured'}
-          </div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Health Check:</div>
-          <div class="stat-value">
-            <a href="/health" target="_blank" style="color: var(--primary);">Current RPC</a> |
-            <a href="/health/rpcs" target="_blank" style="color: var(--primary);">All RPCs</a>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h2>Game State</h2>
-      </div>
-
-      <div class="status-grid">
-        <div class="stat-item">
-          <div class="stat-label">Current Round:</div>
-          <div class="stat-value">${currentRound || "Unknown"}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Last Tapper:</div>
-          <div class="stat-value">
-            ${lastTapper ? `<span class="address">${formatAddress(lastTapper)}</span>` : "Unknown"}
-          </div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Current Tap Cost:</div>
-          <div class="stat-value">${formatEth(tapCost) || "Unknown"}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Last Winner:</div>
-          <div class="stat-value">
-            ${lastWinner ? `<span class="address">${formatAddress(lastWinner)}</span>` : "Unknown"}
-          </div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Last Prize:</div>
-          <div class="stat-value">${formatEth(lastPrize) || "Unknown"}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Contract Address:</div>
-          <div class="stat-value">
-            <span class="address">${formatAddress(CONFIG.contractAddress)}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card events-card">
-      <div class="card-header">
-        <h2>Event & Database Statistics</h2>
-      </div>
-
-      <div class="info-section">
-        <div class="info-box">
-          <h3>Total Events Processed</h3>
-          <p>${eventCounts.Tapped + eventCounts.RoundEnded}</p>
-        </div>
-        <div class="info-box">
-          <h3>Taps</h3>
-          <p>${eventCounts.Tapped}</p>
-        </div>
-        <div class="info-box">
-          <h3>Round Ends</h3>
-          <p>${eventCounts.RoundEnded}</p>
-        </div>
-        <div class="info-box">
-          <h3>DB Batches Sent</h3>
-          <p>${eventCounts.SupabaseBatchesSent}</p>
-        </div>
-        <div class="info-box">
-          <h3>DB Events Upserted</h3>
-          <p>${eventCounts.SupabaseEventsUpserted}</p>
-        </div>
-        <div class="info-box ${eventCounts.SupabaseErrors > 0 ? "error" : "success"}">
-          <h3>DB Errors</h3>
-          <p>${eventCounts.SupabaseErrors}</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="refresh-notice">
-      <span class="pulse"></span> Auto-refreshes on page reload
-    </div>
-  </div>
-
-  <footer class="footer">
-    <div class="container">
-      <p>Last Tap Tracker • Dual RPC Fallback • <span id="current-time"></span></p>
-    </div>
-  </footer>
-
-  <script>
-    function updateTime() {
-      const timeElement = document.getElementById('current-time');
-      if (timeElement) {
-        timeElement.textContent = new Date().toLocaleString();
-      }
-    }
-    updateTime();
-    setInterval(updateTime, 1000);
-  </script>
-</body>
-</html>
-  `;
-
-  res.writeHead(200, { "Content-Type": "text/html" });
-  res.end(html);
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(status, null, 2));
 });
 
 server.listen(8080, "0.0.0.0", () => {
@@ -967,8 +576,8 @@ async function main() {
       log(`Initial chain height: ${height}`, "startup");
 
       const decoder = Decoder.fromSignatures([
-        "Tapped(address indexed tapper, uint256 roundNumber, uint256 tapCostPaid, uint256 timestamp)",
-        "RoundEnded(address indexed winner, uint256 prizeAmount, uint256 roundNumber, uint256 timestamp)",
+        "Tapped(uint256 indexed roundNumber,address indexed player,uint256 cost,uint256 newEndTime,uint256 timestamp)",
+        "RoundEnded(uint256 indexed roundNumber,address indexed winner,uint256 prize,uint256 timestamp)",
       ]);
 
       let query = {
@@ -982,6 +591,7 @@ async function main() {
             LogField.Data,
             LogField.Topic0,
             LogField.Topic1,
+            LogField.Topic2,
           ],
         },
         joinMode: JoinMode.JoinNothing,
@@ -1052,54 +662,58 @@ async function main() {
               try {
                 if (eventType === "Tapped") {
                   eventCounts.Tapped++;
-                  const tapper = decodedLog.indexed[0]?.val?.toString();
-                  const roundNumber = decodedLog.body[0]?.val?.toString();
-                  const tapCostPaid = decodedLog.body[1]?.val?.toString();
-                  const timestampSeconds = decodedLog.body[2]?.val?.toString();
-                  if (!tapper || !roundNumber || !tapCostPaid || !timestampSeconds) {
+                  const roundNumber = decodedLog.indexed[0]?.val?.toString();
+                  const player = decodedLog.indexed[1]?.val?.toString();
+                  const cost = decodedLog.body[0]?.val?.toString();
+                  const newEndTime = decodedLog.body[1]?.val?.toString();
+                  const timestamp = decodedLog.body[2]?.val?.toString();
+                  if (!roundNumber || !player || !cost || !newEndTime || !timestamp) {
                     log(`Missing data in Tapped event: Tx ${formatAddress(transactionHash)}, Log ${logIndex}. Skipping.`, "error");
                     continue;
                   }
 
-                  const eventTimestamp = new Date(Number(timestampSeconds) * 1000);
+                  const eventTimestamp = new Date(Number(timestamp) * 1000);
                   currentRound = roundNumber;
-                  lastTapper = tapper;
-                  tapCost = tapCostPaid;
-                  log(`TAPPED | Blk: ${blockNumber} | Rnd: ${roundNumber} | Tapper: ${formatAddress(tapper)} | Cost: ${formatEth(tapCostPaid)} | ${eventTimestamp.toISOString()}`, "event");
+                  lastTapper = player;
+                  tapCost = cost;
+                  log(`TAPPED | Blk: ${blockNumber} | Rnd: ${roundNumber} | Player: ${formatAddress(player)} | Cost: ${formatEth(cost)} | ${eventTimestamp.toISOString()}`, "event");
 
                   tappedBatch.push({
                     block_number: Number(blockNumber),
                     transaction_hash: String(transactionHash),
                     log_index: Number(logIndex),
-                    tapper_address: String(tapper),
                     round_number: String(roundNumber),
-                    tap_cost_paid: String(tapCostPaid),
+                    player: String(player),
+                    cost: String(cost),
+                    new_end_time: String(newEndTime),
+                    timestamp: String(timestamp),
                     event_timestamp: eventTimestamp.toISOString(),
                   });
                 } else if (eventType === "RoundEnded") {
                   eventCounts.RoundEnded++;
-                  const winner = decodedLog.indexed[0]?.val?.toString();
-                  const prizeAmount = decodedLog.body[0]?.val?.toString();
-                  const roundNumber = decodedLog.body[1]?.val?.toString();
-                  const timestampSeconds = decodedLog.body[2]?.val?.toString();
-                  if (!winner || !prizeAmount || !roundNumber || !timestampSeconds) {
+                  const roundNumber = decodedLog.indexed[0]?.val?.toString();
+                  const winner = decodedLog.indexed[1]?.val?.toString();
+                  const prize = decodedLog.body[0]?.val?.toString();
+                  const timestamp = decodedLog.body[1]?.val?.toString();
+                  if (!roundNumber || !winner || !prize || !timestamp) {
                     log(`Missing data in RoundEnded event: Tx ${formatAddress(transactionHash)}, Log ${logIndex}. Skipping.`, "error");
                     continue;
                   }
 
-                  const eventTimestamp = new Date(Number(timestampSeconds) * 1000);
+                  const eventTimestamp = new Date(Number(timestamp) * 1000);
                   lastWinner = winner;
-                  lastPrize = prizeAmount;
+                  lastPrize = prize;
                   currentRound = (BigInt(roundNumber) + 1n).toString();
-                  log(`ROUND END | Blk: ${blockNumber} | Rnd: ${roundNumber} | Winner: ${formatAddress(winner)} | Prize: ${formatEth(prizeAmount)} | ${eventTimestamp.toISOString()}`, "event");
+                  log(`ROUND END | Blk: ${blockNumber} | Rnd: ${roundNumber} | Winner: ${formatAddress(winner)} | Prize: ${formatEth(prize)} | ${eventTimestamp.toISOString()}`, "event");
 
                   roundEndedBatch.push({
                     block_number: Number(blockNumber),
                     transaction_hash: String(transactionHash),
                     log_index: Number(logIndex),
-                    winner_address: String(winner),
-                    prize_amount: String(prizeAmount),
                     round_number: String(roundNumber),
+                    winner: String(winner),
+                    prize: String(prize),
+                    timestamp: String(timestamp),
                     event_timestamp: eventTimestamp.toISOString(),
                   });
                 }
