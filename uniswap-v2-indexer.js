@@ -1,10 +1,12 @@
-// last-tap-tracker-supabase-batch-dual-rpc.js
+// uniswap-v2-indexer.js
 import { keccak256, toHex } from "viem";
 import {
   HypersyncClient,
   LogField,
   JoinMode,
   Decoder,
+  BlockField,
+  TransactionField,
 } from "@envio-dev/hypersync-client";
 import http from "http";
 import { createClient } from "@supabase/supabase-js";
@@ -13,24 +15,31 @@ const { Pool } = pg;
 import "dotenv/config";
 
 // --- Configuration ---
+const UNISWAP_V2_PAIR_ADDRESS = process.env.UNISWAP_V2_PAIR_ADDRESS || "0x9f6A232C454743a31512C01FcD4A9873BDb3df71";
+const TAP_TOKEN_ADDRESS = process.env.TAP_TOKEN_ADDRESS || "0xAb0d0B32dadAbcADD74aF2E87593c920C3070a81";
+const WETH_TOKEN_ADDRESS = "0x4eB2Bd7beE16F38B1F4a0A5796Fffd028b6040e9";
+
 const CONFIG = {
-  contractAddress: process.env.GAME_CONTRACT_ADDRESS,
-  startBlock: 5507082,
+  uniswapV2PairAddress: UNISWAP_V2_PAIR_ADDRESS,
+  tapTokenAddress: TAP_TOKEN_ADDRESS,
+  wethTokenAddress: WETH_TOKEN_ADDRESS,
+  startBlock: 3507082,
   network: "megaethTestnet",
   logLevel: "event-only", // 'verbose', 'normal', 'event-only'
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
   supabaseDbConnectionString: process.env.SUPABASE_DB_CONNECTION_STRING,
-  batchSize: 100,
+  batchSize: 200,
   maxRetries: 20,
   retryBaseDelay: 500,
 };
 
+// Determine which token is token0 and which is token1
+const [token0, token1] = [CONFIG.wethTokenAddress, CONFIG.tapTokenAddress].sort((a, b) => a.localeCompare(b));
+const IS_WETH_TOKEN0 = token0 === CONFIG.wethTokenAddress;
+
 // --- Enhanced Network URL mapping with fallback RPCs ---
 const NETWORK_URLS = {
-  ethereum: ["https://eth.hypersync.xyz"],
-  arbitrum: ["https://arbitrum.hypersync.xyz"],
-  optimism: ["https://optimism.hypersync.xyz"],
   megaethTestnet: [
     "https://megaeth-testnet.hypersync.xyz",
     "https://6342.rpc.hypersync.xyz"
@@ -76,17 +85,18 @@ const formatAddress = (address) => {
   )}`;
 };
 
-const formatTokens = (wei) => {
-  try {
-    if (wei === null || wei === undefined) return "N/A";
-    const weiBigInt = BigInt(wei);
-    const eth = Number((weiBigInt * 10000n) / 10n ** 18n) / 10000;
-    return eth.toFixed(4) + " TAP";
-  } catch (e) {
-    log(`Error formatting TAP value: ${wei} - ${e.message}`, "error");
-    return wei?.toString() || "N/A";
-  }
-};
+const formatUnits = (value, decimals = 18) => {
+    try {
+        if (value === null || value === undefined) return "N/A";
+        const valueBigInt = BigInt(value);
+        const divisor = 10n ** BigInt(decimals);
+        const scaled = valueBigInt * 1000000n / divisor;
+        return (Number(scaled) / 1000000).toFixed(6);
+    } catch(e) {
+        log(`Error formatting units: ${value} - ${e.message}`, "error");
+        return value?.toString() || "N/A";
+    }
+}
 
 // --- RPC Management Functions ---
 function getCurrentRpcUrl(network) {
@@ -124,9 +134,10 @@ if (!CONFIG.supabaseDbConnectionString) {
   process.exit(1);
 }
 
-log(`SUPABASE_URL format check: ${CONFIG.supabaseUrl?.startsWith("https://") ? "OK" : "INVALID"}`, "startup");
-log(`SUPABASE_SERVICE_ROLE_KEY length check: ${CONFIG.supabaseServiceKey?.length > 30 ? "OK" : "INVALID"}`, "startup");
-log(`SUPABASE_DB_CONNECTION_STRING format check: ${CONFIG.supabaseDbConnectionString?.startsWith("postgresql://") ? "OK" : "INVALID"}`, "startup");
+log(`Monitoring Uniswap V2 Pair: ${CONFIG.uniswapV2PairAddress}`, "startup");
+log(`$TAP Token: ${CONFIG.tapTokenAddress}`, "startup");
+log(`WETH Token: ${CONFIG.wethTokenAddress}`, "startup");
+log(`Token Order: token0=${IS_WETH_TOKEN0 ? 'WETH' : '$TAP'}, token1=${IS_WETH_TOKEN0 ? '$TAP' : 'WETH'}`, 'startup');
 log(`🌐 Available RPCs for ${CONFIG.network}: ${NETWORK_URLS[CONFIG.network].join(', ')}`, 'startup');
 
 // --- Enhanced Hypersync client creation with RPC fallback ---
@@ -222,85 +233,49 @@ const supabase = createClient(CONFIG.supabaseUrl, CONFIG.supabaseServiceKey);
 const SETUP_SQL = `
 CREATE SCHEMA IF NOT EXISTS public;
 
-CREATE TABLE IF NOT EXISTS public.tapped_events_2 (
+CREATE TABLE IF NOT EXISTS public.swap_events (
     block_number BIGINT NOT NULL,
     transaction_hash TEXT NOT NULL,
     log_index INTEGER NOT NULL,
-    round_number TEXT NOT NULL,
-    player TEXT NOT NULL,
-    cost TEXT NOT NULL,
-    new_end_time TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    amount_weth_in NUMERIC(78, 0) NOT NULL,
+    amount_tap_in NUMERIC(78, 0) NOT NULL,
+    amount_weth_out NUMERIC(78, 0) NOT NULL,
+    amount_tap_out NUMERIC(78, 0) NOT NULL,
+    price_tap_in_weth NUMERIC(38, 18),
     event_timestamp TIMESTAMPTZ NOT NULL,
-    contract_address TEXT NOT NULL,
     PRIMARY KEY (transaction_hash, log_index)
 );
 
-CREATE TABLE IF NOT EXISTS public.round_ended_events_2 (
-    block_number BIGINT NOT NULL,
-    transaction_hash TEXT NOT NULL,
-    log_index INTEGER NOT NULL,
-    round_number TEXT NOT NULL,
-    winner TEXT NOT NULL,
-    prize TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    event_timestamp TIMESTAMPTZ NOT NULL,
-    contract_address TEXT NOT NULL,
-    PRIMARY KEY (transaction_hash, log_index)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tapped_2_round_number ON public.tapped_events_2(round_number);
-CREATE INDEX IF NOT EXISTS idx_tapped_2_player ON public.tapped_events_2(player);
-CREATE INDEX IF NOT EXISTS idx_tapped_2_timestamp ON public.tapped_events_2(event_timestamp);
-CREATE INDEX IF NOT EXISTS idx_tapped_2_contract ON public.tapped_events_2(contract_address);
-CREATE INDEX IF NOT EXISTS idx_round_ended_2_round ON public.round_ended_events_2(round_number);
-CREATE INDEX IF NOT EXISTS idx_round_ended_2_winner ON public.round_ended_events_2(winner);
-CREATE INDEX IF NOT EXISTS idx_round_ended_2_timestamp ON public.round_ended_events_2(event_timestamp);
-CREATE INDEX IF NOT EXISTS idx_round_ended_2_contract ON public.round_ended_events_2(contract_address);
+CREATE INDEX IF NOT EXISTS idx_swap_events_timestamp ON public.swap_events(event_timestamp);
+CREATE INDEX IF NOT EXISTS idx_swap_events_sender ON public.swap_events(sender);
+CREATE INDEX IF NOT EXISTS idx_swap_events_recipient ON public.swap_events(recipient);
+CREATE INDEX IF NOT EXISTS idx_swap_events_price ON public.swap_events(price_tap_in_weth);
 
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
-GRANT SELECT ON TABLE public.tapped_events_2 TO anon, authenticated;
-GRANT SELECT ON TABLE public.round_ended_events_2 TO anon, authenticated;
-GRANT ALL PRIVILEGES ON TABLE public.tapped_events_2 TO postgres, service_role;
-GRANT ALL PRIVILEGES ON TABLE public.round_ended_events_2 TO postgres, service_role;
+GRANT SELECT ON TABLE public.swap_events TO anon, authenticated;
+GRANT ALL PRIVILEGES ON TABLE public.swap_events TO postgres, service_role;
 
-ALTER TABLE public.tapped_events_2 ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.round_ended_events_2 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.swap_events ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Anon can read tapped_events_2" ON public.tapped_events_2;
-DROP POLICY IF EXISTS "Service roles full access tapped_events_2" ON public.tapped_events_2;
-DROP POLICY IF EXISTS "Anon can read round_ended_events_2" ON public.round_ended_events_2;
-DROP POLICY IF EXISTS "Service roles full access round_ended_events_2" ON public.round_ended_events_2;
+DROP POLICY IF EXISTS "Anon can read swap_events" ON public.swap_events;
+CREATE POLICY "Anon can read swap_events" ON public.swap_events FOR SELECT TO anon USING (true);
 
-CREATE POLICY "Anon can read tapped_events_2" ON public.tapped_events_2 FOR SELECT TO anon USING (true);
-CREATE POLICY "Service roles full access tapped_events_2" ON public.tapped_events_2 FOR ALL TO service_role, postgres USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can read round_ended_events_2" ON public.round_ended_events_2 FOR SELECT TO anon USING (true);
-CREATE POLICY "Service roles full access round_ended_events_2" ON public.round_ended_events_2 FOR ALL TO service_role, postgres USING (true) WITH CHECK (true);
-
--- Views will be created later after we add contract_address to old tables
--- For now, just create the new tables
+DROP POLICY IF EXISTS "Service roles full access swap_events" ON public.swap_events;
+CREATE POLICY "Service roles full access swap_events" ON public.swap_events FOR ALL TO service_role, postgres USING (true) WITH CHECK (true);
 
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
     IF NOT EXISTS (
         SELECT 1 FROM pg_publication_tables
-        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'tapped_events_2'
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'swap_events'
     ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.tapped_events_2;
-        RAISE NOTICE 'Added public.tapped_events_2 to supabase_realtime publication.';
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.swap_events;
+        RAISE NOTICE 'Added public.swap_events to supabase_realtime publication.';
     ELSE
-        RAISE NOTICE 'public.tapped_events_2 already in supabase_realtime publication.';
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables
-        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'round_ended_events_2'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.round_ended_events_2;
-        RAISE NOTICE 'Added public.round_ended_events_2 to supabase_realtime publication.';
-    ELSE
-        RAISE NOTICE 'public.round_ended_events_2 already in supabase_realtime publication.';
+        RAISE NOTICE 'public.swap_events already in supabase_realtime publication.';
     END IF;
   ELSE
     RAISE WARNING 'Publication supabase_realtime does not exist.';
@@ -344,7 +319,7 @@ async function runDatabaseSetup() {
 async function testSupabaseConnection() {
   try {
     const { error } = await supabase
-      .from("tapped_events_2")
+      .from("swap_events")
       .select("transaction_hash", { count: "exact", head: true })
       .limit(1);
 
@@ -362,25 +337,20 @@ async function testSupabaseConnection() {
 }
 
 // --- Event Signatures and Topics ---
-const TAPPED_TOPIC = keccak256(toHex("Tapped(uint256,address,uint256,uint256,uint256)"));
-const ROUND_ENDED_TOPIC = keccak256(toHex("RoundEnded(uint256,address,uint256,uint256)"));
-const topic0_list = [TAPPED_TOPIC, ROUND_ENDED_TOPIC];
+const SWAP_TOPIC = keccak256(toHex("Swap(address,uint256,uint256,uint256,uint256,address)"));
+const topic0_list = [SWAP_TOPIC];
 
-const POLLING_INTERVAL = 200;
+const POLLING_INTERVAL = 2000;
 
 // --- Metrics and State ---
 let eventCounts = {
-  Tapped: 0,
-  RoundEnded: 0,
+  Swap: 0,
   SupabaseBatchesSent: 0,
   SupabaseEventsUpserted: 0,
   SupabaseErrors: 0,
 };
-let currentRound = null;
-let lastTapper = null;
-let tapCost = null;
-let lastWinner = null;
-let lastPrize = null;
+let latestPrice = 0;
+let latestSwap = {};
 let currentBlock = CONFIG.startBlock;
 let startTime = performance.now();
 let hypersyncClient = null;
@@ -397,18 +367,10 @@ async function batchUpsertEventsWithRetry(tableName, batchData) {
     attempts++;
     try {
       const { error } = await supabase.from(tableName).upsert(batchData, {
-        onConflict: ["transaction_hash", "log_index"], // Changed to array format
+        onConflict: "transaction_hash,log_index",
       });
       if (error) {
-        log(`Supabase batch upsert error (Attempt ${attempts}/${CONFIG.maxRetries}, Table: ${tableName}, Size: ${batchSize}): ${error.message || JSON.stringify(error)}`, "error");
-        if (attempts < CONFIG.maxRetries) {
-          const delay = Math.pow(2, attempts - 1) * CONFIG.retryBaseDelay;
-          log(`Retrying batch upsert to ${tableName} in ${delay}ms`, "supabase");
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        } else {
-          eventCounts.SupabaseErrors += batchSize;
-          return { success: false, error };
-        }
+        throw error;
       } else {
         log(`Successfully upserted batch of ${batchSize} events to ${tableName}${attempts > 1 ? ` after ${attempts} attempts` : ""}`, "supabase");
         eventCounts.SupabaseBatchesSent++;
@@ -416,10 +378,10 @@ async function batchUpsertEventsWithRetry(tableName, batchData) {
         return { success: true, error: null };
       }
     } catch (e) {
-      log(`Exception during batch upsert (Attempt ${attempts}/${CONFIG.maxRetries}, Table: ${tableName}, Size: ${batchSize}): ${e.message}`, "error");
+      log(`Supabase batch upsert error (Attempt ${attempts}/${CONFIG.maxRetries}, Table: ${tableName}, Size: ${batchSize}): ${e.message || JSON.stringify(e)}`, "error");
       if (attempts < CONFIG.maxRetries) {
         const delay = Math.pow(2, attempts - 1) * CONFIG.retryBaseDelay;
-        log(`Retrying batch upsert to ${tableName} after exception in ${delay}ms`, "supabase");
+        log(`Retrying batch upsert to ${tableName} in ${delay}ms`, "supabase");
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
         eventCounts.SupabaseErrors += batchSize;
@@ -513,7 +475,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Default status endpoint
-  const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
+  const totalEvents = eventCounts.Swap;
   const uptimeSeconds = ((performance.now() - startTime) / 1000);
   const eventsPerSecond = uptimeSeconds > 0 ? (totalEvents / uptimeSeconds).toFixed(2) : "0.00";
   const dbOpsPerSecond = uptimeSeconds > 0 ? (eventCounts.SupabaseEventsUpserted / uptimeSeconds).toFixed(2) : "0.00";
@@ -522,7 +484,7 @@ const server = http.createServer(async (req, res) => {
     status: "running",
     uptimeSeconds: Math.floor(uptimeSeconds),
     network: CONFIG.network,
-    contractAddress: CONFIG.contractAddress,
+    contractAddress: CONFIG.uniswapV2PairAddress,
     currentBlock,
     processingRate: {
       eventsPerSecond,
@@ -532,18 +494,17 @@ const server = http.createServer(async (req, res) => {
       currentRpc: currentRpcUrl || "Not connected",
       availableRpcs: NETWORK_URLS[CONFIG.network],
     },
-    gameState: {
-      currentRound,
-      lastTapper,
-      tapCost,
-      lastWinner,
-      lastPrize,
+    swapInfo: {
+      latestPrice_TAP_in_WETH: latestPrice,
+      latestSwap,
     },
     eventStatistics: eventCounts,
   };
 
   res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(status, null, 2));
+  res.end(JSON.stringify(status, (key, value) =>
+    typeof value === 'bigint' ? value.toString() : value,
+  2));
 });
 
 server.listen(8080, "0.0.0.0", () => {
@@ -576,20 +537,19 @@ async function main() {
       const clientResult = await createHypersyncClientWithFallback();
       hypersyncClient = clientResult.client;
 
-      log(`🚀 Starting Last Tap Tracker using ${clientResult.rpcUrl}`, "startup");
-      log(`Network: ${CONFIG.network}, Contract: ${CONFIG.contractAddress}, Start Block: ${CONFIG.startBlock}`, "startup");
+      log(`🚀 Starting Uniswap V2 Indexer using ${clientResult.rpcUrl}`, "startup");
+      log(`Network: ${CONFIG.network}, Pair Contract: ${CONFIG.uniswapV2PairAddress}, Start Block: ${CONFIG.startBlock}`, "startup");
 
       let height = await hypersyncClient.getHeight();
       log(`Initial chain height: ${height}`, "startup");
 
       const decoder = Decoder.fromSignatures([
-        "Tapped(uint256 indexed roundNumber,address indexed player,uint256 cost,uint256 newEndTime,uint256 timestamp)",
-        "RoundEnded(uint256 indexed roundNumber,address indexed winner,uint256 prize,uint256 timestamp)",
+        "Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)"
       ]);
 
       let query = {
         fromBlock: currentBlock,
-        logs: [{ address: [CONFIG.contractAddress], topics: [topic0_list] }],
+        logs: [{ address: [CONFIG.uniswapV2PairAddress], topics: [topic0_list] }],
         fieldSelection: {
           log: [
             LogField.BlockNumber,
@@ -600,8 +560,10 @@ async function main() {
             LogField.Topic1,
             LogField.Topic2,
           ],
+          block: [BlockField.Timestamp],
+          transaction: [TransactionField.Hash] // Ensure transaction data is linked
         },
-        joinMode: JoinMode.JoinNothing,
+        joinMode: JoinMode.JoinAll, // Use the most robust join mode
       };
 
       log(`Starting event stream from block ${query.fromBlock}...`, "startup");
@@ -641,10 +603,12 @@ async function main() {
           }
 
           consecutiveFailures = 0;
-          let tappedBatch = [];
-          let roundEndedBatch = [];
+          let swapBatch = [];
 
           if (res.data && res.data.logs && res.data.logs.length > 0) {
+            const blockTimestampMap = new Map(
+                res.data.blocks?.map(block => [block.number, block.timestamp]) || []
+            );
             const decodedLogs = await decoder.decodeLogs(res.data.logs);
 
             for (let i = 0; i < decodedLogs.length; i++) {
@@ -663,98 +627,78 @@ async function main() {
                 continue;
               }
 
-              const topic0 = rawLog.topics[0];
-              const eventType = topic0 === TAPPED_TOPIC ? "Tapped" : "RoundEnded";
-
               try {
-                if (eventType === "Tapped") {
-                  eventCounts.Tapped++;
-                  const roundNumber = decodedLog.indexed[0]?.val?.toString();
-                  const player = decodedLog.indexed[1]?.val?.toString();
-                  const cost = decodedLog.body[0]?.val?.toString();
-                  const newEndTime = decodedLog.body[1]?.val?.toString();
-                  const timestamp = decodedLog.body[2]?.val?.toString();
-                  if (!roundNumber || !player || !cost || !newEndTime || !timestamp) {
-                    log(`Missing data in Tapped event: Tx ${formatAddress(transactionHash)}, Log ${logIndex}. Skipping.`, "error");
+                eventCounts.Swap++;
+                const sender = decodedLog.indexed[0]?.val?.toString();
+                const recipient = decodedLog.indexed[1]?.val?.toString();
+                const amount0In = BigInt(decodedLog.body[0]?.val);
+                const amount1In = BigInt(decodedLog.body[1]?.val);
+                const amount0Out = BigInt(decodedLog.body[2]?.val);
+                const amount1Out = BigInt(decodedLog.body[3]?.val);
+
+                const blockTimestamp = blockTimestampMap.get(rawLog.blockNumber);
+                if (blockTimestamp === undefined) {
+                    const availableBlocks = Array.from(blockTimestampMap.keys());
+                    log(`Could not find block data for log in block ${rawLog.blockNumber}, tx ${rawLog.transactionHash}. Available blocks in this batch: [${availableBlocks.join(', ')}]`, 'error');
                     continue;
-                  }
-
-                  const eventTimestamp = new Date(Number(timestamp) * 1000);
-                  currentRound = roundNumber;
-                  lastTapper = player;
-                  tapCost = cost;
-                  log(`TAPPED | Blk: ${blockNumber} | Rnd: ${roundNumber} | Player: ${formatAddress(player)} | Cost: ${formatTokens(cost)} | ${eventTimestamp.toISOString()}`, "event");
-
-                  tappedBatch.push({
-                    block_number: Number(blockNumber),
-                    transaction_hash: String(transactionHash),
-                    log_index: Number(logIndex),
-                    round_number: String(roundNumber),
-                    player: String(player),
-                    cost: String(cost),
-                    new_end_time: String(newEndTime),
-                    timestamp: String(timestamp),
-                    event_timestamp: eventTimestamp.toISOString(),
-                    contract_address: String(CONFIG.contractAddress),
-                  });
-                } else if (eventType === "RoundEnded") {
-                  eventCounts.RoundEnded++;
-                  const roundNumber = decodedLog.indexed[0]?.val?.toString();
-                  const winner = decodedLog.indexed[1]?.val?.toString();
-                  const prize = decodedLog.body[0]?.val?.toString();
-                  const timestamp = decodedLog.body[1]?.val?.toString();
-                  if (!roundNumber || !winner || !prize || !timestamp) {
-                    log(`Missing data in RoundEnded event: Tx ${formatAddress(transactionHash)}, Log ${logIndex}. Skipping.`, "error");
-                    continue;
-                  }
-
-                  const eventTimestamp = new Date(Number(timestamp) * 1000);
-                  lastWinner = winner;
-                  lastPrize = prize;
-                  currentRound = (BigInt(roundNumber) + 1n).toString();
-                  log(`ROUND END | Blk: ${blockNumber} | Rnd: ${roundNumber} | Winner: ${formatAddress(winner)} | Prize: ${formatTokens(prize)} | ${eventTimestamp.toISOString()}`, "event");
-
-                  roundEndedBatch.push({
-                    block_number: Number(blockNumber),
-                    transaction_hash: String(transactionHash),
-                    log_index: Number(logIndex),
-                    round_number: String(roundNumber),
-                    winner: String(winner),
-                    prize: String(prize),
-                    timestamp: String(timestamp),
-                    event_timestamp: eventTimestamp.toISOString(),
-                    contract_address: String(CONFIG.contractAddress),
-                  });
                 }
+                const eventTimestamp = new Date(Number(blockTimestamp) * 1000);
+
+                const amountWethIn = IS_WETH_TOKEN0 ? amount0In : amount1In;
+                const amountTapIn = IS_WETH_TOKEN0 ? amount1In : amount0In;
+                const amountWethOut = IS_WETH_TOKEN0 ? amount0Out : amount1Out;
+                const amountTapOut = IS_WETH_TOKEN0 ? amount1Out : amount0Out;
+
+                let price = 0;
+                if (amountTapIn > 0n && amountWethOut > 0n) {
+                    price = Number(amountWethOut * 10n**18n / amountTapIn) / 1e18;
+                } else if (amountWethIn > 0n && amountTapOut > 0n) {
+                    price = Number(amountWethIn * 10n**18n / amountTapOut) / 1e18;
+                }
+                latestPrice = price;
+
+                latestSwap = {
+                    tx: formatAddress(rawLog.transactionHash),
+                    type: amountWethIn > 0n ? 'SELL $TAP' : 'BUY $TAP',
+                    tapAmount: formatUnits(amountTapIn > 0n ? amountTapIn : amountTapOut),
+                    wethAmount: formatUnits(amountWethIn > 0n ? amountWethIn : amountWethOut),
+                    price: price.toFixed(8)
+                };
+                log(`SWAP | Blk: ${blockNumber} | ${latestSwap.type} | Price: ${latestSwap.price} WETH/$TAP`, "event");
+
+                swapBatch.push({
+                    block_number: Number(blockNumber),
+                    transaction_hash: String(transactionHash),
+                    log_index: Number(logIndex),
+                    sender,
+                    recipient,
+                    amount_weth_in: amountWethIn.toString(),
+                    amount_tap_in: amountTapIn.toString(),
+                    amount_weth_out: amountWethOut.toString(),
+                    amount_tap_out: amountTapOut.toString(),
+                    price_tap_in_weth: price.toFixed(18),
+                    event_timestamp: eventTimestamp.toISOString(),
+                });
+
               } catch (processingError) {
                 log(`Error processing log: ${processingError.message}. Tx: ${formatAddress(transactionHash)}, Log: ${logIndex}. Skipping. Stack: ${processingError.stack}`, "error");
               }
             }
 
             // Send Batches
-            const batchPromises = [];
-            if (tappedBatch.length > 0)
-              batchPromises.push(batchUpsertEventsWithRetry("tapped_events_2", tappedBatch));
-            if (roundEndedBatch.length > 0)
-              batchPromises.push(batchUpsertEventsWithRetry("round_ended_events_2", roundEndedBatch));
-            if (batchPromises.length > 0) {
-              const results = await Promise.all(batchPromises);
-              results.forEach((result) => {
-                if (!result.success)
-                  log(`Failed final upsert batch. Error: ${JSON.stringify(result.error)}`, "error");
-              });
+            if (swapBatch.length > 0) {
+              await batchUpsertEventsWithRetry("swap_events", swapBatch);
             }
           }
 
           // Update block position
           if (res.nextBlock) {
-            const previousBlock = currentBlock;
             currentBlock = res.nextBlock;
             query.fromBlock = currentBlock;
 
             if (currentBlock - lastProgressLogBlock >= 10000) {
               const seconds = (performance.now() - runStartTime) / 1000;
-              const totalEvents = eventCounts.Tapped + eventCounts.RoundEnded;
+              const totalEvents = eventCounts.Swap;
               log(`📊 Progress: Block ${currentBlock} | ${totalEvents} events | ${eventCounts.SupabaseEventsUpserted} DB upserts | ${eventCounts.SupabaseErrors} DB errors | ${seconds.toFixed(1)}s | RPC: ${currentRpcUrl}`, "normal");
               lastProgressLogBlock = currentBlock;
             }
